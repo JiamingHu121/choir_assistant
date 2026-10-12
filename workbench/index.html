@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>乐谱工作台</title>
+  <script>if (location.protocol === 'file:') document.documentElement.classList.add('file-entry');</script>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="interactive.css">
+  <link rel="stylesheet" href="pitch.css">
+  <link rel="stylesheet" href="console.css">
+  <link rel="stylesheet" href="calibration_ui.css">
+  <link rel="stylesheet" href="entry.css">
+</head>
+<body>
+  <section id="local-entry" class="entry-card" aria-label="启动本地工作台" hidden>
+    <span class="eyebrow">本地乐谱工作台</span><h1>从本地服务打开工作台</h1>
+    <p>双击 HTML 只能打开页面文件。乐谱数据、音频生成和校准需要本地服务；请运行 <strong>choir-assistant serve --project /path/to/project.json</strong>，启动服务并打开工作台。</p>
+    <a class="entry-open" href="http://127.0.0.1:8765/">服务已启动：打开工作台 ↗</a>
+    <details><summary>也可在终端启动</summary><code id="entry-command">choir-assistant serve --project /path/to/project.json</code><button id="entry-copy" type="button">复制启动命令</button><span id="entry-copy-status" role="status"></span></details>
+    <p class="hint">启动器会复用本项目已运行的服务；若端口被其他程序占用，会说明原因。无需重新识谱。</p>
+  </section>
+  <section id="entry-error" class="entry-error" role="alert" hidden></section>
+  <header class="workspace-header">
+    <div class="header-score">
+      <div class="brand"><span class="mark" aria-hidden="true">♬</span><strong>乐谱工作台</strong></div>
+      <div class="score-identity"><h1 id="title">正在载入曲谱…</h1><span id="subtitle"></span></div>
+      <div class="score-tools">
+        <label class="check"><input id="follow" type="checkbox" checked>跟随</label>
+        <label class="zoom-label">谱面 <select id="zoom"><option value="80">80%</option><option value="100" selected>100%</option><option value="125">125%</option><option value="150">150%</option></select></label>
+      </div>
+    </div>
+    <div class="header-console"><strong>控制台</strong><span><i class="dot" aria-hidden="true"></i>本地工作空间</span></div>
+  </header>
+  <main>
+    <section class="score-column" aria-label="曲谱与播放位置">
+      <div class="score-status"><span id="position">正在载入乐谱…</span><span id="score-validity" role="status">正在校验节奏…</span></div>
+      <div id="interactive-host"></div>
+      <div id="original-view"><div id="score-scroll" tabindex="0" aria-label="可滚动乐谱"><div id="pages"></div></div></div>
+    </section>
+    <aside id="workbench-console" aria-label="工作台控制台">
+      <nav class="console-tabs" role="tablist" aria-label="控制功能">
+        <button id="tab-selection" class="console-tab is-current" role="tab" aria-selected="true" aria-controls="console-selection" data-console-tab="selection">选区</button>
+        <button id="tab-playback" class="console-tab" role="tab" aria-selected="false" aria-controls="console-playback" tabindex="-1" data-console-tab="playback">播放</button>
+        <button id="tab-metronome" class="console-tab" role="tab" aria-selected="false" aria-controls="console-metronome" tabindex="-1" data-console-tab="metronome">节拍</button>
+        <button id="tab-pitch" class="console-tab" role="tab" aria-selected="false" aria-controls="console-pitch" tabindex="-1" data-console-tab="pitch">音准</button>
+        <button id="tab-review" class="console-tab" role="tab" aria-selected="false" aria-controls="console-review" tabindex="-1" data-console-tab="review">校对</button>
+      </nav>
+      <div class="console-content">
+        <section id="console-selection" class="console-subpanel" role="tabpanel" aria-labelledby="tab-selection" tabindex="0">
+          <div class="console-intro"><h2>选择练习片段</h2><p>点选音符或拖动框选，Shift / ⌘ 可加选。也可按小节与声部选择。</p></div>
+        </section>
+        <section id="console-playback" class="console-subpanel" role="tabpanel" aria-labelledby="tab-playback" tabindex="0" hidden>
+          <section class="panel">
+            <h2>速度与播放</h2>
+            <div class="tempo-fields"><label for="tempo-bpm">初始速度 <input id="tempo-bpm" type="number" min="20" max="1000" step="0.1" value="120" inputmode="decimal"></label><label for="tempo-unit">拍单位 <select id="tempo-unit"><option value="quarter">四分音符 ♩</option><option value="dotted-quarter">附点四分音符 ♩.</option><option value="eighth">八分音符 ♪</option></select></label></div>
+            <p id="tempo-source" class="hint" role="status">正在读取曲谱速度标记…</p>
+            <label class="range-label">练习速度倍率 <output id="speed-value">1.00×</output></label>
+            <input id="speed" type="range" min="0.25" max="2" step="any" value="1">
+            <div class="range-hints"><span>慢练 0.25×</span><span>谱面初始速度 1×</span><span>2×</span></div>
+            <label class="range-label">总音量 <output id="volume-value">80%</output></label><input id="volume" type="range" min="0" max="1" step="0.01" value="0.8">
+            <details class="compact-details"><summary>播放对齐</summary><label class="range-label">乐谱对齐微调 <output id="offset-value">0.0 秒</output></label><input id="offset" type="range" min="-3" max="3" step="0.1" value="0"><p class="hint">正值让高亮提前，用于补偿设备播放延迟。</p></details>
+          </section>
+          <section class="panel">
+            <h2>声音与声部</h2>
+            <div class="form-row"><label for="program">合唱音色</label><select id="program"><option value="52">合唱 / Choir Aahs</option><option value="91">柔和铺底 / 原试听音色</option><option value="53">Voice Oohs</option><option value="0">钢琴</option><option value="48">弦乐</option></select></div>
+            <div class="form-row"><label for="transpose">移调</label><select id="transpose"></select></div>
+            <div id="mixer"></div><label class="check"><input id="draft-audio" type="checkbox">允许生成待校对部分的草稿音频</label><button id="apply" class="primary">应用并生成音频</button><p id="render-status" class="hint" role="status" aria-live="polite">声部音量、音色与移调需要重新合成。</p><button id="reset" class="text-button">恢复全部默认参数</button>
+          </section>
+          <section class="panel loop-panel"><h2>片段循环</h2><div class="loop-fields"><label>起始小节<input id="loop-start" type="number" min="1" value="1"></label><span>→</span><label>结束小节<input id="loop-end" type="number" min="1" value="4"></label></div><label class="check"><input id="loop" type="checkbox">循环这个片段</label><p id="loop-error" class="hint" role="status"></p></section>
+          <div class="console-download"><a id="download" href="/assets/base.wav" download>下载当前 WAV ↗</a></div>
+        </section>
+        <section id="console-metronome" class="console-subpanel" role="tabpanel" aria-labelledby="tab-metronome" tabindex="0" hidden>
+          <section class="panel metronome-panel"><h2>节拍器</h2><div class="metronome-display"><span id="metro-indicator" aria-hidden="true"></span><strong id="metro-readout" role="status" aria-live="polite">随曲谱速度与拍号</strong></div><label class="check"><input id="metro-enabled" type="checkbox">播放时加入节拍器</label><div class="form-row"><label for="metro-subdivision">细分节拍</label><select id="metro-subdivision"><option value="beat">每拍</option><option value="eighth">八分音符</option></select></div><label class="range-label" for="metro-volume">节拍音量 <output id="metro-volume-value">25%</output></label><input id="metro-volume" type="range" min="0" max="1" step="0.01" value="0.25"><button id="metro-standalone" class="primary" aria-pressed="false">开始独立打拍</button><p class="hint">强拍使用不同的点击声。速度随播放面板设置，拍单位按当前小节确定。</p></section>
+        </section>
+        <section id="console-pitch" class="console-subpanel" role="tabpanel" aria-labelledby="tab-pitch" tabindex="0" hidden><section id="pitch-host" aria-label="音准练习"></section></section>
+        <section id="console-review" class="console-subpanel" role="tabpanel" aria-labelledby="tab-review" tabindex="0" hidden>
+          <div class="console-intro"><h2>识谱校对</h2><p>选择一个音符可修改音高与时值；每次修改保存依据并重建曲谱与音频。</p></div>
+          <section id="calibration-host" aria-label="全谱校准工作流"></section>
+          <section class="notice"><strong>原谱校对与节奏检查</strong><p id="source-review-status">正在读取当前曲谱的审核范围与节奏检查结果…</p></section>
+        </section>
+      </div>
+    </aside>
+  </main>
+  <footer><button id="play" class="play-button" aria-label="播放">▶</button><button id="restart" class="restart" aria-label="回到开头">↺</button><div class="transport"><div class="transport-top"><strong id="now-measure">第 1 小节</strong><span><span id="current-time">0:00</span> / <span id="duration">—</span></span></div><input id="seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="播放进度"></div><span class="transport-tip">空格 播放 / 暂停</span></footer>
+  <audio id="audio" preload="metadata"></audio>
+  <script src="entry.js"></script>
+</body>
+</html>

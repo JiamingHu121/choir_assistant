@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "choir-assistant",
+  "version": "0.1.0",
+  "description": "Turn a PDF choral score into an evidence-reviewed, synchronized rehearsal workbench.",
+  "author": {
+    "name": "Jiaming Hu",
+    "url": "https://github.com/JiamingHu121"
+  },
+  "homepage": "https://github.com/JiamingHu121/choir_assistant",
+  "repository": "https://github.com/JiamingHu121/choir_assistant",
+  "license": "MIT",
+  "keywords": ["choir", "score", "musicxml", "omr", "rehearsal", "pitch"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Choir Assistant",
+        "shortDescription": "PDF scores to interactive choir rehearsal",
+        "longDescription": "Import a PDF score, inspect its musical structure, review source-bound corrections, and open a synchronized score and audio workbench with a metronome and experimental pitch practice.",
+        "developerName": "Jiaming Hu",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "websiteURL": "https://github.com/JiamingHu121/choir_assistant",
+        "defaultPrompt": [
+          "Use $choir-workbench to import this PDF score and generate a reviewed rehearsal workbench.",
+          "用 $choir-workbench 导入这份 PDF 曲谱，完成全谱校准并打开排练工作台。"
+        ]
+      }
+    }
+  }
+}

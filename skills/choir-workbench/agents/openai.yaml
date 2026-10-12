@@ -1,0 +1,4 @@
+interface:
+  display_name: "Choir Workbench"
+  short_description: "Import, review, and rehearse PDF choral scores"
+  default_prompt: "Use $choir-workbench to import this PDF score, review its musical structure, and open a synchronized rehearsal workbench."

@@ -1,0 +1,60 @@
+{
+  "version": "0.1.0",
+  "testDate": "2026-10-13",
+  "platform": "macOS arm64",
+  "python": "3.12.14",
+  "installation": {
+    "separateVenv": true,
+    "regularWheel": true,
+    "pipCheck": "passed",
+    "outsidePluginDirectory": true
+  },
+  "publicPdfSha256": "715c88a886e12daf57f078619ffd6a27718e56eaeb03a3cbd6945d98a8eac96e",
+  "pdfImport": {
+    "actualAudiverisRecognition": true,
+    "secondImportVerifiedCache": true,
+    "role": "Pno -> Piano",
+    "measures": 8,
+    "sourceNotes": 29,
+    "truthPitchDurationTieMatches": 29,
+    "performanceEvents": 28,
+    "quarterBpm": 96,
+    "notationCoverage": {
+      "notes": 29,
+      "rendered": 29,
+      "missing": []
+    },
+    "audio": {
+      "canonicalSeconds": 20.0,
+      "midiSeconds": 20.0,
+      "wavSeconds": 20.0,
+      "sampleRate": 44100,
+      "peak": 0.0557861328125,
+      "clippedSamples": 0
+    },
+    "wholeScoreQueueMeasures": 8
+  },
+  "calibration": {
+    "fixture": "Copied public source with one deliberately changed pitch; original PDF unchanged",
+    "omrGeometry": false,
+    "sourcePageHashChecked": true,
+    "acceptedEdits": 1,
+    "correctedFirstPitchMidi": 60,
+    "rebuiltAllOutputs": true,
+    "sourceIdsPreserved": 29
+  },
+  "ui": {
+    "selectedFourNotes": true,
+    "synthesizedSelectedWavSeconds": 2.5,
+    "singleNoteAudition": true,
+    "metronomeStartStopAt96": true,
+    "originalPdfSwitch": true
+  },
+  "pythonTests": 103,
+  "javascriptTests": 62,
+  "limitations": [
+    "This small original fixture does not measure general OMR accuracy.",
+    "Physical microphone/speaker accuracy was not tested.",
+    "Whole-score reading coverage is recorded separately, without automatic certification."
+  ]
+}

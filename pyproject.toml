@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "choir-assistant"
+version = "0.1.0"
+description = "PDF score recognition, evidence-based calibration, and an interactive choir rehearsal workbench"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{name = "Jiaming Hu"}]
+dynamic = ["dependencies"]
+
+[project.urls]
+Repository = "https://github.com/JiamingHu121/choir_assistant"
+Issues = "https://github.com/JiamingHu121/choir_assistant/issues"
+
+[project.scripts]
+choir-assistant = "choir_assistant.cli:main"
+
+[tool.setuptools]
+py-modules = ["runtime"]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+include = ["choir_assistant*", "workbench*", "omr*", "synth*"]
+exclude = ["tests*", "examples*", "scripts*"]
+
+[tool.setuptools.package-data]
+workbench = ["*.html", "*.js", "*.css"]
