@@ -2,8 +2,10 @@
 """Check the distributable layout and optionally write a source plugin ZIP."""
 from pathlib import Path
 import argparse
+import ast
 import hashlib
 import json
+import tomllib
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,11 +23,17 @@ def check():
     legacy = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
     marketplace = json.loads((ROOT / ".agents/plugins/marketplace.json").read_text())
     assert manifest["name"] == legacy["name"] == "choir-assistant"
-    assert manifest["version"] == legacy["version"]
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    version_assignments = [node.value for node in ast.parse((ROOT / "choir_assistant/__init__.py").read_text()).body
+                           if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets)]
+    assert len(version_assignments) == 1, "Expected one source package version"
+    source_version = ast.literal_eval(version_assignments[0])
+    assert manifest["version"] == legacy["version"] == project["version"] == source_version, "Plugin and Python package versions differ"
     assert marketplace["plugins"][0]["source"] == {"source": "local", "path": "./"}
     for name in ("README.md", "LICENSE", "THIRD_PARTY.md", "SETUP.md", "pyproject.toml", "requirements.txt",
                  "skills/choir-workbench/SKILL.md", "scripts/bootstrap.py", "scripts/doctor.py",
                  "scripts/choir_assistant.py", "choir_assistant/cli.py", "workbench/index.html",
+                 "workbench/source_verification.py", "docs/SOURCE_REVIEW.md",
                  "examples/practice-study.pdf", "examples/practice-study.musicxml"):
         assert (ROOT / name).is_file(), f"Missing package resource: {name}"
     for path in files():

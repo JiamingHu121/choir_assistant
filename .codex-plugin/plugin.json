@@ -1,8 +1,11 @@
 {
   "name": "choir-assistant",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Turn a PDF choral score into an evidence-reviewed, synchronized rehearsal workbench.",
-  "author": {"name": "Jiaming Hu", "url": "https://github.com/JiamingHu121"},
+  "author": {
+    "name": "Jiaming Hu",
+    "url": "https://github.com/JiamingHu121"
+  },
   "homepage": "https://github.com/JiamingHu121/choir_assistant",
   "repository": "https://github.com/JiamingHu121/choir_assistant",
   "license": "MIT",
@@ -13,8 +16,13 @@
     "longDescription": "Import, inspect, review, synthesize, and rehearse PDF choral scores with an interactive local workbench.",
     "developerName": "Jiaming Hu",
     "category": "Productivity",
-    "capabilities": ["Read", "Write"],
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
     "websiteURL": "https://github.com/JiamingHu121/choir_assistant",
-    "defaultPrompt": ["Use $choir-workbench to import this PDF score and generate a reviewed rehearsal workbench."]
+    "defaultPrompt": [
+      "Use $choir-workbench to import this PDF score and generate a reviewed rehearsal workbench."
+    ]
   }
 }

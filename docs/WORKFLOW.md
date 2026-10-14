@@ -147,9 +147,53 @@ choir-assistant serve --project /writable/score-run/project.json
 
 The server binds loopback and uses the latest successful project/preview bundle. Verify page loading, source view, note/box selection, part controls, short passage playback, and metronome. Browser pitch practice supports live microphone or uploaded singing and target frequency/spectrum displays. Its antiphonal mode plays selected background parts while assessing another target part; ambiguous unison/shared harmonics or background-dominated frames may be unscored.
 
+## Validate notation separately from audio
+
+For source-derived repairs, first freeze source facts from original page/system
+images, including unchanged difficult passages. Compare those facts with the
+input, canonical MusicXML, and model after rebuilding. Cover every source page;
+have an independent reader examine ledger lines, mid-measure clefs, tuplets,
+polyphonic chords, and octave endpoints before inspecting proposed values.
+Complete beat totals and agreement between MIDI and the model cannot detect a
+consistently misread pitch.
+
+MusicXML pitch values contain sounding pitches; octave directions control their
+printed register ([MusicXML specification](https://www.w3.org/2021/06/musicxml40/musicxml-reference/elements/octave-shift/)). Verify the actual `canonical.mei` octave start/end IDs and each
+affected note's printed `oct` and sounding `oct.ges`, including the first note
+outside the scope. `engraving-normalization.json` records exact offset-to-staff
+event adaptations made for Verovio, while preserving all pitches, durations,
+relationships, and octave-direction musical times. Unrepresentable offsets stay
+explicit in `unresolvedOctaveOffsets`; do not guess a nearby endpoint. Sequential
+mid-measure clef changes are valid; conflicting clefs mean duplicate definitions
+for one staff within the same attributes block.
+
+When a staff-bar needs retranscription, materialize already accepted corrections
+before adding or removing symbols, then publish a new source-identity map. Never
+replay ordinal note IDs against a reordered staff-bar. Keep the original source,
+old correction ledgers, and old bundles. Bind coverage and independent evidence
+to the final source hash and revision, including any rebuild for engraving.
+Current canonical IDs follow part, measure index, and current note ordinal.
+After retranscription, give the derived input the same current IDs and store old
+OMR IDs only in the provenance map. A retained old ordinal can name a different
+note after insertion; compare sequential XML semantics before accepting an ID
+match.
+
+Verify the actual workbench after publication: every SVG page loads, an asset
+failure has a visible retry, and both view tabs remain clickable in PDF mode.
+The launcher must preserve the virtual environment's interpreter path, including
+its symlink, so the child retains the installed audio and OMR dependencies.
+
+## Independent acceptance
+
+Use `verify --project ...` for frozen artifact consistency and add `--facts ...`
+for source-first, revision/hash-bound staff-bar samples. See the
+[source review contract](SOURCE_REVIEW.md). These checks do not replace actual
+MEI/SVG, MIDI/WAV, or browser acceptance. New bundles freeze the original PDF;
+legacy bundles without that declaration report unknown source-image binding.
+
 ## Known limits
 
-Version 0.1 preserves these uncertainties rather than concealing them:
+Version 0.2 preserves these uncertainties rather than concealing them:
 
 - OMR can add false notes/rests without violating bar completeness. The correction ledger does not yet support removing arbitrary false source objects.
 - Written pitch and sounding octave can differ. Octave-direction scopes and nonzero transpositions need source confirmation; some cases are blocked or remain draft, and the SVG must be checked separately.

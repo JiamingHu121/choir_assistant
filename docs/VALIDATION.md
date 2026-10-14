@@ -1,5 +1,40 @@
 # Plugin package validation
 
+## v0.2.0 — current release
+
+Validated on 2026-10-15: **137 Python tests** and **65 JavaScript tests** passed.
+The updated skill passed its frontmatter validator; actual Codex discovery
+reported version `0.2.0` as available, without installing or enabling it.
+Four metadata versions agree, and the source package scan excludes private
+scores, recordings, generated runs, binaries and machine-specific paths.
+
+A regular wheel was built from a temporary source copy, installed into a separate
+writable target, and invoked from outside the repository using the existing
+pinned Python runtime dependencies. `pip check` passed. The original public
+Practice Study MusicXML and its PDF generated 29 notes, eight measures, 29/29
+SVG note coverage, and 20 seconds of MIDI/WAV with zero clipped samples. This
+acceptance did not rerun Audiveris recognition.
+
+The installed CLI passed independent artifact checks, followed the active
+workbench bundle pointer, and matched four staff-bar facts frozen from the
+public author MusicXML before generating. It rejected an incorrect octave,
+stale evidence and an output path overwriting its source facts. Replacing the
+external PDF did not change verification of the frozen original. Separate real
+Poppler acceptance also rendered the frozen PDF after the external path became
+invalid. Deletion/tampering of declared assets, ambiguous grace/octave endpoints,
+and sequential XML units are covered by synthetic regressions.
+
+Three local, private score bundles passed the independent parser over 6,723
+structured objects. Their old PDF binding is correctly reported as not frozen;
+no historical bundle was rewritten, and no private material is in this release.
+
+[Structured v0.2.0 results](release-validation-v0.2.0.json) include the wheel hash
+and validation boundary. Source-fact acceptance is limited to the supplied
+staff-bars; these checks do not measure universal OMR accuracy or physical
+singing feedback. See [the reusable review contract](SOURCE_REVIEW.md).
+
+## v0.1.0 — historical acceptance
+
 The v0.1.0 metadata and skill were checked on 2026-10-13 with the installed Codex CLI. The test used process-local configuration overrides and temporary validation dependencies; the user's persistent Codex configuration remained unchanged.
 
 | Check | Observed result |

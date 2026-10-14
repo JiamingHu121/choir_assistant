@@ -6,6 +6,11 @@ This repository is a **local-execution Codex plugin and a standalone CLI**. It p
 
 ![Workbench generated from the original practice fixture](docs/workbench-example.png)
 
+**v0.2.0** adds independent source-fact verification, frozen original PDFs,
+sequential MusicXML unit handling, exact octave-line checks, and resilient
+score/PDF switching. [Release notes](docs/RELEASE-v0.2.0.md) ·
+[Reusable proofreading contract](docs/SOURCE_REVIEW.md).
+
 ## Install the plugin
 
 ```sh
@@ -47,6 +52,8 @@ Use the printed workbench URL. The included eight-bar [Practice Study PDF](examp
 | `apply --run calibration-run --accept-source-reviewed --project project.json` | Accept only source-verified edits and rebuild |
 | `apply --run calibration-run --review decisions.json --project project.json` | Apply explicit accept/reject/uncertain decisions |
 | `rebuild --project project.json` | Rebuild from the current source and correction ledger |
+| `verify --project project.json --output check.json` | Independently check the frozen XML/model and artifact integrity |
+| `verify --bundle bundle-dir --facts source-facts.json --output check.json` | Compare original-score facts bound to the final revision and hashes |
 | `serve --project project.json` | Open the latest validated bundle in a loopback workbench |
 | `status --project project.json` | Show project progress, bundle, and open issues |
 
@@ -56,7 +63,7 @@ The workbench has left/right panels and switchable selection, playback, beat, pi
 
 Every note retains its pitch, rational duration, written notation, staff/voice, chord position, and connection relationships. Meter/lane completeness, cross-part timing, and notation contradictions identify review candidates. A beat-fitting solution is not enough evidence to change music. Accepted edits bind source hashes, old values, original image evidence, and a frozen revision; SVG, MIDI, audio, and pitch targets are rebuilt together.
 
-Version 0.1 has known gaps in false extra-symbol removal, octave-direction scopes, mixed-meter relations, and repeat/ending routes. Singing feedback and background-interference handling need real device validation. See [workflow and limits](docs/WORKFLOW.md). Structural checks and passed tests do not measure whole-score OMR accuracy.
+Version 0.2 preserves uncertainty in unsupported extra-symbol removal, ambiguous octave/grace boundaries, mixed-meter relations, and repeat/ending routes. Repairs beyond the field ledger can use an explicitly traced source retranscription; complete beat totals do not establish source accuracy. Singing feedback and background-interference handling need real device validation. See [workflow and limits](docs/WORKFLOW.md). Structural checks and passed tests do not measure whole-score OMR accuracy.
 
 The bundled pipeline runs recognition and synthesis locally. Microphone samples are processed by the browser. If Codex or another hosted agent reviews score images, those images are handled by that host's model/data policy; the plugin does not add a separate cloud inference service. Only import or share scores and recordings you have permission to use. User PDFs, private recordings, generated run directories, SoundFonts, and engine binaries are not distributed in this repository.
 

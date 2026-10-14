@@ -369,6 +369,20 @@ def build(config, output=None):
         started = begin("input")
         snapshot = inputs / original.name
         shutil.copy2(original, snapshot)
+        source_pdf = config.get("sourcePdf") or (str(original) if input_kind == "pdf" else None)
+        if source_pdf:
+            source_pdf = Path(source_pdf)
+            pdf_hash = file_hash(source_pdf)
+            if input_kind == "pdf" and source_pdf.resolve() == original.resolve():
+                pdf_snapshot = snapshot
+            else:
+                pdf_snapshot = inputs / "source.pdf"
+                if pdf_snapshot == snapshot:
+                    pdf_snapshot = inputs / "source-view.pdf"
+                shutil.copy2(source_pdf, pdf_snapshot)
+            if file_hash(pdf_snapshot) != pdf_hash:
+                raise ValueError("Original PDF changed while its snapshot was copied")
+            manifest["sourcePdf"] = {"path": pdf_snapshot.relative_to(output).as_posix(), "sha256": pdf_hash}
         corrections = read_corrections(config.get("corrections"))
         tempo_context = load_evidence(config["tempoEvidence"]) if config.get("tempoEvidence") else None
         write_json(inputs / "corrections.json", corrections)

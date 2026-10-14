@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import defaultdict
 from fractions import Fraction
 
-POLICY_VERSION = "music-semantics-v2.3"
+POLICY_VERSION = "music-semantics-v2.4"
 BLOCKING_ISSUE_KINDS = frozenset({
     "missing-source-measure", "missing-meter", "conflicting-meters",
     "unresolved-meter-mapping", "negative-backup", "ambiguous-backup",

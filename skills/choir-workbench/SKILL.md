@@ -34,7 +34,7 @@ Read [workflow and review contract](../../docs/WORKFLOW.md) for state paths, rev
 
 Use independent agent review when a dense or ambiguous passage benefits from it. Give the reviewer original crops, source IDs, and the source-blind queue before showing proposed edits. Ask for explicit pitch, written type/dots, performed duration, voice/staff, chord simultaneity, tuplet ratios/display numbers, ties/slurs, and uncertainty. Review in bounded page/system chunks until the entire queue is covered. Without a subagent, follow the same source-first procedure directly.
 
-Music theory locates conflicts; it does not manufacture truth. A unique beat-filling solution, repeated pattern, OMR beam graph, or smooth harmony is a proposal until verified against the original. Preserve legitimate pickups, sparse voices, forward gaps, polymeter, and chords. If an unsupported operation is needed, retain the unresolved issue and draft status rather than shortening/deleting by proxy.
+Music theory locates conflicts; it does not manufacture truth. A unique beat-filling solution, repeated pattern, OMR beam graph, or smooth harmony is a proposal until verified against the original. Preserve legitimate pickups, sparse voices, forward gaps, polymeter, and chords. When a field ledger cannot express a source-confirmed repair, use a separately traced derived-source retranscription: materialize accepted corrections first, keep the original and old ledgers, publish old-to-new identities, and rebuild all outputs. Until that source reading is confirmed, keep the unresolved issue and draft status; do not shorten/delete by proxy or replay old ordinals against reordered symbols.
 
 Save original-PDF hash-bound findings using the review contract. Then create a new frozen scan and accept its source-verified edits:
 
@@ -49,12 +49,29 @@ For candidate-by-candidate decisions use `apply --run ... --review /absolute/dec
 
 Check the selected bundle manifest and actual assets: input hashes, stable source IDs, complete expected SVG note coverage, canonical/performance events, MIDI/WAV timing, and clipping report. For reviewed tuplets, check actual engraving timing and displayed ratios as well as MIDI; correct audio alone does not prove a correctly spaced score. Spot-check representative repaired and unchanged passages against the source.
 
+For octave directions and mid-measure clef changes, check the actual MEI printed
+and sounding octaves and the exact scope endpoints, including the following
+out-of-scope note. Check `engraving-normalization.json` for unresolved octave
+offsets. Source-frozen pitch samples must agree with the input, canonical XML,
+model, and rendered score; complete beat totals are not a source pitch check.
+
+Run the independent bundle check, then compare source-first frozen facts for the
+reviewed staff-bars. Read [the fact contract](../../docs/SOURCE_REVIEW.md) when
+creating those records; bind the final revision, XML/model hashes, and frozen PDF
+hash. A selected-region match does not certify unselected measures. New bundles
+include the original PDF snapshot; older bundles can have unknown PDF binding.
+
+```sh
+choir-assistant verify --project /writable/score-run/project.json --output /writable/consistency.json
+choir-assistant verify --project /writable/score-run/project.json --facts /writable/source-facts.json --output /writable/source-check.json
+```
+
 ```sh
 choir-assistant serve --project /writable/score-run/project.json
 ```
 
-Open the returned loopback URL with the available browser tool. Verify score visibility, selection/voice filtering, a short playback selection, and the metronome/control tabs. Keep the source-PDF view available for draft scores. If browser tools are unavailable, provide the URL and clearly state which UI behavior was not exercised.
+Open the returned loopback URL with the available browser tool. Verify all SVG pages, selection/voice filtering, a real short playback selection, and the metronome/control tabs. Switch from interactive score to PDF and back repeatedly; confirm the toolbar still receives clicks. A failed SVG must show a retry while successful pages remain visible. Keep the source-PDF view available for draft scores. If browser tools are unavailable, provide the URL and clearly state which UI behavior was not exercised.
 
 Pitch practice compares a selected part or single note with microphone/uploaded singing. The antiphonal mode plays other chosen parts as a background and uses interference-aware scoring. These are experimental: no physical microphone/speaker accuracy claim follows from fixture tests, and ambiguous unison/harmonic interference may be unscored. Do not request microphone capture unless the user's practice task requires it.
 
-Deliver the workbench URL, run/project path, source-review coverage, remaining issues, and validation actually performed. v0.1 still requires source review for false extra symbols, octave-direction scopes, mixed-meter relations, and repeat routes; see [known limits](../../docs/WORKFLOW.md#known-limits).
+Deliver the workbench URL, run/project path, source-review coverage, remaining issues, and validation actually performed. v0.2 still requires source review for false extra symbols, octave-direction scopes, mixed-meter relations, and repeat routes; see [known limits](../../docs/WORKFLOW.md#known-limits).

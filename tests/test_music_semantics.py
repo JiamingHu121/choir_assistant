@@ -17,6 +17,50 @@ def note(step="C", duration=4, voice="1", type_name="whole", extra="", staff=Non
 
 
 class MusicalSemanticsTests(unittest.TestCase):
+    def test_divisions_changes_follow_xml_order_and_inherit_across_measures(self):
+        body = (note(duration=2, type_name='quarter')
+                + '<attributes><divisions>6</divisions></attributes>'
+                + note('D', 3, type_name='eighth')
+                + note('F', 3, type_name='eighth').replace('<note>', '<note><chord/>')
+                + '<backup><duration>9</duration></backup><forward><duration>3</duration><voice>2</voice></forward>'
+                + note('E', 6, voice='2', type_name='quarter')
+                + '<backup><duration>9</duration></backup>'
+                + note('G', 9, voice='3', type_name='quarter', extra='<dot/>'))
+        model = self.model(self.bar(body, meter='3/8', divisions=2)
+                           + '<measure number="2">' + note('A', 9, type_name='quarter', extra='<dot/>') + '</measure>')
+        self.assertEqual([n['duration'] for n in model['notes']], [1, .5, .5, 1, 1.5, 1.5])
+        self.assertEqual([n['offset'] for n in model['notes']], [0, 1, 1, .5, 0, 0])
+        self.assertEqual(model['rhythmValidation']['blockingMeasureIndices'], [])
+        xml = ET.fromstring(model['_xml'])
+        self.assertEqual([d.text for d in xml.findall('part/measure/attributes/divisions')], ['10080', '10080'])
+        self.assertEqual(xml.findtext('part/measure/backup/duration'), '15120')
+
+    def test_reviewed_chord_anchor_uses_its_current_midbar_divisions(self):
+        body = (note(duration=2, type_name='quarter') + '<attributes><divisions>6</divisions></attributes>'
+                + note('D', 3, type_name='eighth'))
+        entry = {'sourcePart': 'P1', 'measureIndex': 1, 'afterNoteId': 'n-P1-m1-o2',
+                 'kind': 'chord-tone', 'duration': .5, 'pitch': 65, 'pitchName': 'F4',
+                 'reason': 'Synthetic missing chord member', 'evidence': 'source image review'}
+        model = self.model(self.bar(body, meter='3/8', divisions=2),
+                           {'__insertions__': {'n-review-midbar': entry}})
+        member = next(n for n in model['notes'] if n['id'] == 'n-review-midbar')
+        self.assertEqual((member['offset'], member['duration']), (1, .5))
+        self.assertTrue(member['chordTone'])
+
+    def test_sequential_mid_measure_clefs_are_valid_but_simultaneous_duplicates_warn(self):
+        g = '<clef number="1"><sign>G</sign><line>2</line></clef>'
+        f = '<clef number="1"><sign>F</sign><line>4</line></clef>'
+        changing = ('<attributes>' + g + '</attributes>'
+                    + note(duration=2, type_name='half')
+                    + '<attributes>' + f + '</attributes>'
+                    + note('D', duration=2, type_name='half'))
+        model = self.model(self.bar(changing))
+        self.assertNotIn('conflicting-clefs', model['audit']['summary']['byKind'])
+        xml = ET.fromstring(model['_xml'])
+        self.assertEqual([c.findtext('sign') for c in xml.findall('part/measure/attributes/clef')], ['G', 'F'])
+        simultaneous = self.model(self.bar('<attributes>' + g + f + '</attributes>' + note()))
+        self.assertEqual(simultaneous['audit']['summary']['byKind']['conflicting-clefs'], 1)
+
     def model(self, measures, corrections=None, parts=None):
         parts = parts or '<part id="P1">' + measures + '</part>'
         xml = ('<score-partwise><part-list><score-part id="P1"><part-name>Test</part-name></score-part>'

@@ -510,9 +510,13 @@ def _insert_reviewed_symbols(parts, numbers, entries, corrections):
             # source cursor unit; a notated type is not independent authority.
             divisions = Fraction(1)
             for original_measure in part_map[entry["sourcePart"]].findall("measure")[:index]:
-                value = original_measure.findtext("attributes/divisions")
-                if value is not None:
-                    divisions = _fraction(value)
+                for original_child in original_measure:
+                    if original_child.tag == "attributes":
+                        value = original_child.findtext("divisions")
+                        if value is not None:
+                            divisions = _fraction(value)
+                    if original_child is after:
+                        break
             anchor_duration = corrections.get(entry["afterNoteId"], {}).get("duration")
             if anchor_duration is None:
                 anchor_duration = (_fraction(after.findtext("duration")) / divisions
@@ -808,19 +812,24 @@ def build_model(corrections=None, source_path=None, omr_path=None, tempo_context
             key = m.findtext("attributes/key/fifths")
             if key is not None:
                 key_fifths = int(key)
-            div = m.find("attributes/divisions")
-            if div is not None:
-                divisions = _fraction(div.text)
-                if divisions <= 0:
-                    raise ValueError(f"Non-positive divisions in {part_id}, measure {number}")
-                div.text = str(CANONICAL_DIVISIONS)
-            elif i == 0:
-                attrs = m.find("attributes")
+            # Save source units before normalization; every attributes block
+            # takes effect at its actual XML position, including mid-bar changes.
+            source_divisions = {attrs: _fraction(attrs.findtext("divisions"))
+                                for attrs in m.findall("attributes") if attrs.find("divisions") is not None}
+            if i == 0:
+                attrs = None
+                for leading in m:
+                    if leading.tag == "attributes":
+                        attrs = leading
+                        break
+                    if leading.tag in ("note", "backup", "forward", "direction", "sound"):
+                        break
                 if attrs is None:
                     attrs = ET.Element("attributes")
                     m.insert(0, attrs)
-                attrs.insert(0, ET.Element("divisions"))
-                attrs[0].text = str(CANONICAL_DIVISIONS)
+                if attrs.find("divisions") is None:
+                    attrs.insert(0, ET.Element("divisions"))
+                    attrs[0].text = str(CANONICAL_DIVISIONS)
             bar_change = measure_overrides.get(str(number), measure_overrides.get(number, {}))
             force_meter = bool(bar_change.get("timeSignature"))
             local_staff_meters = {int(key.rsplit("/staff", 1)[1]): value for key, value in staff_meters[i].items()
@@ -867,18 +876,27 @@ def build_model(corrections=None, source_path=None, omr_path=None, tempo_context
                     ET.SubElement(clef, "clef-octave-change").text = str(clef_change["octaveChange"])
                 attrs.append(clef)
                 correction(f"{part_id}-measure-{i + 1}", number, "clef", old_clefs, ET.tostring(clef, encoding="unicode"), clef_change.get("reason", "原谱谱号校对"))
-            clefs = m.findall("attributes/clef")
-            duplicate = Counter(c.get("number", "1") for c in clefs)
-            if any(count > 1 for count in duplicate.values()):
-                issue(number, "warning", "conflicting-clefs", "同一谱表在同一attributes中导出多个谱号，音高可能受误识别谱号影响。",
-                      {"sourcePart": part_id, "clefs": [ET.tostring(c, encoding="unicode") for c in clefs]}, "先看原谱真实谱号及八度标记，再核对音高；不凭和声习惯改音。")
+            # Sequential attributes may legitimately change clef mid-measure.
+            # Only simultaneous definitions for one staff conflict.
+            for attribute_index, attribute_block in enumerate(m.findall("attributes")):
+                clefs = attribute_block.findall("clef")
+                duplicate = Counter(c.get("number", "1") for c in clefs)
+                if any(count > 1 for count in duplicate.values()):
+                    issue(number, "warning", "conflicting-clefs", "同一谱表在同一attributes中导出多个谱号，音高可能受误识别谱号影响。",
+                          {"sourcePart": part_id, "attributeBlock": attribute_index, "clefs": [ET.tostring(c, encoding="unicode") for c in clefs]}, "先看原谱真实谱号及八度标记，再核对音高；不凭和声习惯改音。")
             raw_cursor, cursor, previous_onset, previous_raw_onset = Fraction(0), Fraction(0), Fraction(0), Fraction(0)
             anchors = {Fraction(0): Fraction(0)}
             ordinal, chord_id, spacer_ordinal = 0, None, 0
             previous_staff, previous_voice = 1, "1"
             preceding_note = None
             for child in list(m):
-                if child.tag == "direction":
+                if child.tag == "attributes":
+                    if child in source_divisions:
+                        divisions = source_divisions[child]
+                        if divisions <= 0:
+                            raise ValueError(f"Non-positive divisions in {part_id}, measure {number}")
+                        child.find("divisions").text = str(CANONICAL_DIVISIONS)
+                elif child.tag == "direction":
                     offset_node = child.find("offset")
                     offset = _fraction(offset_node.text) / divisions if offset_node is not None else Fraction(0)
                     if offset_node is not None:

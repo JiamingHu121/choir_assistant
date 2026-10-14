@@ -35,7 +35,7 @@ function showRhythmStatus(model){
  const check=model.rhythmValidation;
  if(!check){badge.textContent='节奏尚未校验';return;}
  const pending=check.blockingMeasures || [];
- badge.textContent=check.status==='validated'?'识谱草稿 · 节奏检查通过，仍需原图复核':`识谱草稿 · ${pending.length} 个小节待校对`;
+ badge.textContent=check.status==='validated'?'节奏结构检查通过':`${pending.length} 个小节待校对`;
  badge.title=pending.length?`待校对小节：${pending.join('、')}。选取已通过节奏检查的片段可正常合成。`:'结构检查通过不等于逐音识谱已经准确。';
 }
 function updateLabels(){groups.forEach(g=>$(`value-${g}`).textContent=`${Math.round(Number($(`gain-${g}`).value)*100)}%`);}

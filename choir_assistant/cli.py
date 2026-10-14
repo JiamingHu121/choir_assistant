@@ -271,6 +271,33 @@ def rebuild_project(args):
     return {"status": "ready", "bundle": str(bundle), "revision": manifest["revision"], "validation": manifest["validation"]}
 
 
+def verify_project(args):
+    from workbench.source_verification import verify_bundle
+    if args.bundle:
+        bundle = Path(args.bundle).expanduser().resolve()
+    else:
+        project, state_path, generated = project_paths(args.project)
+        bundle_path = read_json(state_path).get("latestBundle")
+        if not bundle_path:
+            raise ValueError("The project has no completed bundle to verify")
+        bundle = Path(bundle_path).resolve()
+        # A workbench review may have selected a newer immutable bundle without
+        # changing the CLI's base pointer. Match the preview's identity guards.
+        pointer_path = generated / "current.json"
+        if pointer_path.is_file():
+            pointer = read_json(pointer_path)
+            if pointer.get("baseBundle") == str(bundle) and pointer.get("configPath") == str(project):
+                bundle = Path(pointer["bundle"]).resolve()
+    facts = Path(args.facts).expanduser().resolve() if args.facts else None
+    report = verify_bundle(bundle, facts)
+    if args.output:
+        output = external_path(args.output)
+        if output.is_relative_to(bundle) or output == facts:
+            raise ValueError("Verification output must not overwrite the frozen bundle or source facts")
+        write_json(output, report)
+    return report
+
+
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     commands = result.add_subparsers(dest="command", required=True)
@@ -303,6 +330,12 @@ def parser():
     apply.add_argument("--project", help="Switch this project's bundle pointer to the reviewed result")
     rebuild = commands.add_parser("rebuild")
     rebuild.add_argument("--project", required=True)
+    verifier = commands.add_parser("verify", help="Independently verify bundle semantics and optional source-frozen staff-bar facts")
+    target = verifier.add_mutually_exclusive_group(required=True)
+    target.add_argument("--bundle")
+    target.add_argument("--project")
+    verifier.add_argument("--facts", help="Revision/hash-bound facts transcribed from original score images")
+    verifier.add_argument("--output", help="Save the JSON report outside the frozen bundle")
     doctor = commands.add_parser("doctor", help="Check external runtime tools and soundfont")
     doctor.add_argument("--json", action="store_true")
     status = commands.add_parser("status")
@@ -324,11 +357,12 @@ def main(argv=None):
         elif args.command == "scan": result = scan_project(args)
         elif args.command == "apply": result = apply_project(args)
         elif args.command == "rebuild": result = rebuild_project(args)
+        elif args.command == "verify": result = verify_project(args)
         else:
             project, state_path, generated, state, config = active_project(args.project)
             result = {**state, "activeCorrectionLedger": config.get("corrections")}
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
+        return 1 if args.command == "verify" and not result["passed"] else 0
     except Exception as error:
         print(json.dumps({"status": "failed", "error": str(error)}, ensure_ascii=False), file=sys.stderr)
         return 2

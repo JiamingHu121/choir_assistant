@@ -38,7 +38,7 @@ class LauncherTests(TestCase):
             with mock.patch.object(start,'server_identity',side_effect=[None,None,identity]), mock.patch.object(start,'port_occupied',return_value=False), mock.patch.object(start.subprocess,'Popen',return_value=process) as launch, mock.patch.object(start.time,'sleep'):
                 self.assertEqual(start.ensure_server(8877,bundle=bundle,config=config,generated=generated),identity)
             command=launch.call_args.args[0]
-            self.assertEqual(command[0],str(Path(sys.executable).resolve()))
+            self.assertEqual(command[0],str(Path(sys.executable).absolute()))
             self.assertIn(str(bundle),command)
             self.assertIn(str(config),command)
             self.assertTrue((generated/'server-launch.log').is_file())
@@ -50,3 +50,16 @@ class LauncherTests(TestCase):
             with mock.patch.object(start,'server_identity',return_value=None), mock.patch.object(start,'port_occupied',return_value=False), mock.patch.object(start.subprocess,'Popen',return_value=process):
                 with self.assertRaisesRegex(RuntimeError,'server-launch.log'):
                     start.ensure_server(8877,bundle=root/'bundle',config=root/'project.json')
+
+    def test_child_keeps_venv_launcher_even_when_it_is_a_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve();venv_python=root/'venv/bin/python'
+            venv_python.parent.mkdir(parents=True)
+            venv_python.symlink_to(sys.executable)
+            bundle=root/'bundle';config=root/'project.json';generated=root/'preview'
+            identity=self.identity(start.ROOT,bundle,config)
+            process=mock.Mock();process.poll.return_value=None
+            with mock.patch.object(start.sys,'executable',str(venv_python)), mock.patch.object(start,'server_identity',side_effect=[None,identity]), mock.patch.object(start,'port_occupied',return_value=False), mock.patch.object(start.subprocess,'Popen',return_value=process) as launch:
+                start.ensure_server(8877,bundle=bundle,config=config,generated=generated)
+            self.assertEqual(launch.call_args.args[0][0],str(venv_python))
+            self.assertNotEqual(launch.call_args.args[0][0],str(venv_python.resolve()))

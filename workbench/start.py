@@ -48,7 +48,9 @@ def ensure_server(port: int, root: Path = ROOT, timeout: float = 15, *, bundle=N
     if port_occupied(port):
         raise RuntimeError(f"端口 {port} 已被其他服务或旧版工作台占用；未停止任何进程。"
                            f"请关闭旧服务后重试，或用 choir-assistant serve --project PROJECT --port {port + 1}。")
-    python = Path(sys.executable).resolve()
+    # Dereferencing a venv launcher selects its system interpreter instead and
+    # loses the environment's installed OMR/audio modules in the child process.
+    python = Path(sys.executable).absolute()
     output = Path(generated).resolve() if generated else Path(config).resolve().parent / "preview"
     if output.is_relative_to(ROOT):
         raise ValueError("Generated files must stay outside the installed plugin")

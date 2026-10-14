@@ -1,0 +1,58 @@
+{
+  "release": "0.2.0",
+  "checkedAt": "2026-10-14T20:02:15.496171+00:00",
+  "wheel": {
+    "filename": "choir_assistant-0.2.0-py3-none-any.whl",
+    "sha256": "8e73b4ac53d6287b44544b950bdd21f07d7ac1c6dbc0fbc5783c51601cae8f31",
+    "regularWheelInstalledOutsideCheckout": true,
+    "runtimeDependencies": "Reused existing pinned Python runtime dependencies",
+    "pipCheck": "No broken requirements found."
+  },
+  "publicFixture": {
+    "input": "Original public Practice Study MusicXML plus its PDF; this test did not rerun Audiveris recognition",
+    "revision": "3f290bf4ede41304",
+    "modelPolicy": "music-semantics-v2.4",
+    "notes": 29,
+    "measures": 8,
+    "duration": 20,
+    "clippedSamples": 0,
+    "notationCoverage": "29/29",
+    "frozenPdfHashMatched": true,
+    "independentArtifactCheckPassed": true,
+    "projectFollowsActiveWorkbenchPointer": true,
+    "sourceFactObjectsChecked": 4,
+    "wrongOctaveRejected": true,
+    "staleFactsRejected": true,
+    "factsOverwriteRejected": true,
+    "externalPdfReplacementDidNotChangeFrozenSource": true
+  },
+  "limits": [
+    "No new OMR accuracy measurement",
+    "No physical microphone/speaker validation"
+  ],
+  "testSuites": {
+    "python": {
+      "passed": 137,
+      "failed": 0
+    },
+    "javascript": {
+      "passed": 65,
+      "failed": 0
+    }
+  },
+  "skill": {
+    "frontmatterValidation": "passed",
+    "hostDiscoveryVersion": "0.2.0",
+    "installedByValidation": false
+  },
+  "privateBundleRegression": {
+    "scores": 3,
+    "structuredObjects": 6723,
+    "allPassed": true,
+    "privateSourceMaterialDistributed": false
+  },
+  "package": {
+    "metadataVersions": "root/compatibility/Python/source synchronized",
+    "privatePathAndDataScan": "passed"
+  }
+}

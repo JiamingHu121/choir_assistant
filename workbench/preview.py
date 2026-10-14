@@ -36,12 +36,36 @@ class BundlePreview:
             raise ValueError("Preview requires a completed workflow bundle")
         assets = bundle / "assets"
         model_path = assets / "interactive.json"
-        indexed = {item["path"]: item for item in manifest.get("artifacts", [])}
-        for path in assets.iterdir():
+        indexed = {}
+        for item in manifest.get("artifacts", []):
+            name = item.get("path") if isinstance(item, dict) else None
+            if not isinstance(name, str) or not name:
+                raise ValueError("Bundle artifact requires a relative path")
+            relative = Path(name)
+            path = bundle / relative
+            if relative.is_absolute() or ".." in relative.parts or not path.resolve().is_relative_to(bundle.resolve()):
+                raise ValueError(f"Bundle artifact path is outside its bundle: {name}")
+            key = relative.as_posix()
+            if key in indexed:
+                raise ValueError(f"Duplicate bundle artifact path: {name}")
+            if not path.is_file() or file_hash(path) != item.get("sha256"):
+                raise ValueError(f"Preview artifact changed, missing or is unverified: {name}")
+            indexed[key] = item
+        for path in assets.rglob("*"):
             if path.is_file():
                 item = indexed.get(path.relative_to(bundle).as_posix())
-                if not item or file_hash(path) != item["sha256"]:
+                if not item:
                     raise ValueError(f"Preview artifact changed or is unverified: {path.name}")
+        frozen_pdf = None
+        source_pdf_binding = {"status": "unknown"}
+        if "sourcePdf" in manifest:
+            pdf = manifest["sourcePdf"]
+            name = pdf.get("path") if isinstance(pdf, dict) else None
+            item = indexed.get(name) if isinstance(name, str) else None
+            if not item or not name.lower().endswith(".pdf") or pdf.get("sha256") != item["sha256"]:
+                raise ValueError("Frozen source PDF metadata differs from the verified artifact index")
+            frozen_pdf = bundle / name
+            source_pdf_binding = {"status": "bundle-sha256-verified", "sha256": pdf["sha256"]}
         model = json.loads(model_path.read_text())
         if model.get("revision") != manifest.get("revision"):
             raise ValueError("Bundle manifest and score revision disagree")
@@ -56,16 +80,20 @@ class BundlePreview:
                 if requested["input"].get(key) != config["input"].get(key):
                     raise ValueError(f"Preview source differs from bundle: {key}")
         self.bundle, self.assets, self.config = bundle, assets, deepcopy(config)
+        self.source_pdf = frozen_pdf
+        self.source_pdf_binding = source_pdf_binding
 
     def _render_source_pages(self):
         self.pages = []
         self.source_alignment = "unavailable"
-        source = self.config.get("sourcePdf") or self.config["input"].get("pdf")
+        source = self.source_pdf or self.config.get("sourcePdf") or self.config["input"].get("pdf")
         if not source:
             return
         from workbench.calibration_evidence import render_pdf
         directory = self.generated / "original" / file_hash(source)
         rendered = render_pdf(source, directory)
+        if (self.source_pdf and rendered.get("sourceSha256") != self.source_pdf_binding["sha256"]):
+            raise ValueError("Frozen source PDF changed during rendering")
         model = self.read_model()
         geometry = model.get("pages", [])
         aligned = len(rendered["pages"]) == len(geometry) and all(
@@ -92,6 +120,7 @@ class BundlePreview:
                 "pages": self.pages, "measures": model["measures"], "duration": model["duration"], "groups": groups,
                 "audio": model["audio"], "revision": model["revision"], "interactive": True,
                 "sourceAlignment": self.source_alignment,
+                "sourcePdfBinding": deepcopy(self.source_pdf_binding),
                 "playbackSettings": model.get("playbackSettings", self.config["playback"]),
                 "rhythmValidation": model["rhythmValidation"]}
 

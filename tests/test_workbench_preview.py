@@ -62,6 +62,52 @@ class PreviewIsolationTests(TestCase):
             with self.assertRaisesRegex(ValueError, "completed"):
                 BundlePreview(bundle, path)
 
+    def test_missing_declared_audio_or_notation_cannot_be_served(self):
+        for missing in ("base.mp3", "notation-1.svg"):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
+                bundle, path = project(Path(directory) / "project", "First", "T")
+                notation = bundle / "assets/notation-1.svg"
+                notation.write_text('<svg xmlns="http://www.w3.org/2000/svg"/>')
+                manifest = json.loads((bundle / "manifest.json").read_text())
+                manifest["artifacts"].append({"path": "assets/notation-1.svg", "sha256": file_hash(notation)})
+                write_json(bundle / "manifest.json", manifest)
+                (bundle / "assets" / missing).unlink()
+                with self.assertRaisesRegex(ValueError, "artifact changed, missing"):
+                    BundlePreview(bundle, path)
+
+    def test_artifact_index_cannot_point_outside_bundle(self):
+        for outside in ("../score.musicxml", "/absolute/source.musicxml"):
+            with self.subTest(outside=outside), tempfile.TemporaryDirectory() as directory:
+                bundle, path = project(Path(directory) / "project", "First", "T")
+                manifest = json.loads((bundle / "manifest.json").read_text())
+                manifest["artifacts"].append({"path": outside, "sha256": "0" * 64})
+                write_json(bundle / "manifest.json", manifest)
+                with self.assertRaisesRegex(ValueError, "outside its bundle"):
+                    BundlePreview(bundle, path)
+
+    def test_relocated_bundle_checks_its_frozen_inputs_by_relative_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle, path = project(Path(directory) / "project", "First", "T")
+            snapshot = bundle / "inputs/source.musicxml"
+            snapshot.parent.mkdir()
+            snapshot.write_text("<score-partwise/>")
+            manifest = json.loads((bundle / "manifest.json").read_text())
+            manifest["artifacts"].append({"path": "inputs/source.musicxml", "sha256": file_hash(snapshot)})
+            write_json(bundle / "manifest.json", manifest)
+            relocated = bundle.with_name("relocated-bundle")
+            bundle.rename(relocated)
+            self.assertEqual(BundlePreview(relocated, path).bundle, relocated.resolve())
+            (relocated / "inputs/source.musicxml").unlink()
+            with self.assertRaisesRegex(ValueError, "artifact changed, missing"):
+                BundlePreview(relocated, path)
+
+    def test_unindexed_asset_is_not_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle, path = project(Path(directory) / "project", "First", "T")
+            (bundle / "assets/unverified.svg").write_text("<svg/>")
+            with self.assertRaisesRegex(ValueError, "unverified"):
+                BundlePreview(bundle, path)
+
     def test_preview_static_paths_never_fall_back_to_current_score(self):
         from workbench import server
         with tempfile.TemporaryDirectory() as directory:

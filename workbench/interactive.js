@@ -1,6 +1,23 @@
 /* The same canonical note IDs connect notation, selection, audio, and corrections. */
+async function loadNotationAssets(pages, revision, fetchAsset = fetch, timeoutMs = 15000) {
+  return Promise.all(pages.map(async page => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetchAsset(`${page.svg}${page.svg.includes('?') ? '&' : '?'}revision=${encodeURIComponent(revision || '')}`, { cache: 'no-cache', signal: controller.signal });
+      if (!response.ok) throw new Error(`互动谱第 ${page.page} 页加载失败（${response.status}）`);
+      return { page, text: await response.text() };
+    } catch (error) {
+      return { page, error: error.name === 'AbortError' ? `互动谱第 ${page.page} 页加载超时，可重试` : error.message || String(error) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }));
+}
+if (typeof module !== 'undefined' && module.exports) module.exports = { loadNotationAssets };
 (() => {
   'use strict';
+  if (typeof window === 'undefined') return;
 
   const node = (tag, className, text) => {
     const element = document.createElement(tag);
@@ -400,19 +417,30 @@
       const token = ++svgLoadToken;
       pages.replaceChildren(node('p', 'notation-loading', '正在加载互动谱…'));
       const interactivePages = model.pagesInteractive || model.interactivePages || [];
-      const loaded = await Promise.all(interactivePages.map(async page => {
-        const response = await fetch(`${page.svg}${page.svg.includes('?') ? '&' : '?'}revision=${encodeURIComponent(model.revision || '')}`, { cache: 'no-cache' });
-        if (!response.ok) throw new Error(`互动谱第 ${page.page} 页加载失败`);
-        const doc = new DOMParser().parseFromString(await response.text(), 'image/svg+xml');
-        const svg = doc.documentElement;
-        if (svg.localName !== 'svg' || doc.querySelector('parsererror')) throw new Error(`互动谱第 ${page.page} 页格式错误`);
+      const assets = await loadNotationAssets(interactivePages, model.revision);
+      if (token !== svgLoadToken) return;
+      let failedPages = 0;
+      const loaded = assets.map(asset => {
+        const page = asset.page;
+        const wrapper = node('section', 'notation-page'); wrapper.dataset.page = String(page.page);
+        wrapper.append(node('div', 'notation-page-label', `互动谱 ${String(page.page).padStart(2, '0')}`));
+        const doc = asset.error ? null : new DOMParser().parseFromString(asset.text, 'image/svg+xml');
+        const svg = doc?.documentElement;
+        const error = asset.error || (svg?.localName !== 'svg' || doc.querySelector('parsererror') ? `互动谱第 ${page.page} 页格式错误` : '');
+        if (error) {
+          failedPages += 1;
+          wrapper.append(node('p', 'notation-loading', error));
+          const retry = node('button', 'notation-button', '重新加载互动谱');
+          retry.addEventListener('click', () => refresh(model).catch(error => setStatus(error.message, true)));
+          wrapper.append(retry);
+          return wrapper;
+        }
         // Notation assets are local renderer output. SVG stays inert after insertion.
         for (const unsafe of svg.querySelectorAll('script, foreignObject')) unsafe.remove();
         for (const element of svg.querySelectorAll('*')) for (const attribute of [...element.attributes]) if (attribute.name.startsWith('on')) element.removeAttribute(attribute.name);
-        const wrapper = node('section', 'notation-page'); wrapper.dataset.page = String(page.page);
-        wrapper.append(node('div', 'notation-page-label', `互动谱 ${String(page.page).padStart(2, '0')}`), document.importNode(svg, true));
+        wrapper.append(document.importNode(svg, true));
         return wrapper;
-      }));
+      });
       if (token !== svgLoadToken) return;
       pages.replaceChildren(...loaded);
       let missing = 0;
@@ -430,7 +458,11 @@
         const title = document.createElementNS('http://www.w3.org/2000/svg', 'title'); title.textContent = labelNote(note); element.prepend(title);
         elements.set(id, element);
       }
-      if (!loaded.length) setStatus('互动谱尚未生成，可先使用原谱对照。', true);
+      if (!loaded.length) {
+        pages.append(node('p', 'notation-loading', '互动谱尚未生成，可切换原 PDF 对照。'));
+        setStatus('互动谱尚未生成，可先使用原谱对照。', true);
+      }
+      else if (failedPages) setStatus(`${failedPages} 页加载失败，可在对应页面重新加载；已载入页面仍可点选。`, true);
       else if (elements.size < notes.size) setStatus(`已连接 ${elements.size} / ${notes.size} 个音符；未映射音符暂不能在谱面点选。`, true);
       else setStatus('互动谱已就绪。单击音符快速试听，拖动框选后合成真实音色片段。');
       host.dataset.mappedNotes = String(elements.size); host.dataset.unmappedSvgNotes = String(missing);
