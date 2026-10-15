@@ -1,6 +1,37 @@
 # Plugin package validation
 
-## v0.2.0 — current release
+## v0.4.0 — package regression
+
+On 2026-10-16, the final full suites passed: **191 Python tests** and
+**71 JavaScript tests**. They include 8 real HTTP authorization/feedback cases,
+4 private-configuration provisioning cases, 9 isolated staging/inspection cases,
+20 legacy publishing cases, 13 export/runtime cases and the canonical-index
+regression for pickups and repeated printed measure numbers.
+
+Local browser acceptance opened a password-protected score, played the original
+full audio from a late measure across page boundaries into the tied tail, and
+returned from PDF view to the correctly highlighted final measure. Branding,
+project link, measure labels, lyrics and feedback context were inspected.
+These observations do not establish that OS account migration or public CDN
+authorization has been completed; those are separate deployment acceptance steps.
+
+HTTP tests exercise direct resource denials, per-work isolation, wrong/tampered/
+expired credentials, browser-bound CSRF, Origin checks, Secure/HttpOnly/SameSite
+cookies, login limits, private feedback receipts/plain-text storage and quotas,
+internal health authentication, and protected lyric sidecars. Filesystem tests
+verify full incoming releases from incremental transfers, unchanged active files,
+root-owned state requirements, manifest identity, compare-and-swap checks, locks,
+corrupt transfers, private incoming directories, mode dispatch and unsupported
+migration rollback. The staging fixture never starts/stops a real service.
+
+Source package checks scan public code, docs and examples for private machine
+paths and unexpected score/audio/binary assets. All four package/plugin versions
+must agree. Versioned ZIP creation packages only repository-owned code and the
+original public Practice Study fixture. Public-site deployment and isolated OS
+provisioning remain separate acceptance steps; they are not proved by a package
+ZIP, unit tests or a changed plugin version.
+
+## v0.2.0 — historical acceptance
 
 Validated on 2026-10-15: **137 Python tests** and **65 JavaScript tests** passed.
 The updated skill passed its frontmatter validator; actual Codex discovery

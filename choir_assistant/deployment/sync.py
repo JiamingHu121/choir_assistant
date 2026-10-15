@@ -45,7 +45,18 @@ def load_profile(path):
             raise ValueError(field + " must be outside the installed plugin")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}", value.get("sshHost", "")):
         raise ValueError("sshHost must be an existing SSH alias, without options or user syntax")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}", value.get("launchdLabel", "")):
+    mode = value.get("publisherMode", "user-launchagent")
+    if mode not in ("user-launchagent", "isolated-manual"):
+        raise ValueError("Unsupported publisherMode")
+    value["publisherMode"] = mode
+    if mode == "isolated-manual":
+        value["isolatedPublishHelper"] = _absolute(value.get("isolatedPublishHelper"), "isolatedPublishHelper")
+        value["isolatedAdminPython"] = _absolute(value.get("isolatedAdminPython", "/usr/bin/python3"), "isolatedAdminPython")
+        try:
+            Path(value["isolatedPublishHelper"]).relative_to(value["remoteRoot"])
+        except ValueError:
+            raise ValueError("isolatedPublishHelper must belong to remoteRoot") from None
+    elif not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}", value.get("launchdLabel", "")):
         raise ValueError("Invalid dedicated launchdLabel")
     if value.get("bind", "127.0.0.1") != "127.0.0.1":
         raise ValueError("The publishing profile must keep the backend on loopback")
@@ -78,14 +89,22 @@ def _ready(profile, ready):
 
 
 def _remote_profile(profile):
-    return {key: profile[key] for key in ("remoteRoot", "remotePython", "launchdLabel", "publicUrl",
-                                         "bind", "port", "healthTimeoutSeconds")}
+    keys = ["remoteRoot", "remotePython", "publicUrl", "bind", "port", "healthTimeoutSeconds", "publisherMode"]
+    keys += ["isolatedPublishHelper", "isolatedAdminPython"] if profile.get("publisherMode") == "isolated-manual" else ["launchdLabel"]
+    return {key: profile[key] for key in keys if key in profile}
 
 
 def _call(profile, action, payload=None, archive=None):
     """Run only the bundled receiver; request data travels on stdin, never shell interpolation."""
     source = Path(remote.__file__).read_bytes()
-    program = "import base64;exec(compile(base64.b64decode(" + repr(base64.b64encode(source).decode("ascii")) + "),'<site-sync-receiver>','exec'))"
+    program = "import base64;"
+    if profile.get("publisherMode") == "isolated-manual":
+        from . import isolated
+        isolated_source = base64.b64encode(Path(isolated.__file__).read_bytes()).decode("ascii")
+        program += ("import types,sys;_receiver=types.ModuleType('_choir_isolated_receiver');"
+                    "exec(compile(base64.b64decode(" + repr(isolated_source) + "),'<isolated-site-receiver>','exec'),_receiver.__dict__);"
+                    "sys.modules['_choir_isolated_receiver']=_receiver;")
+    program += "exec(compile(base64.b64decode(" + repr(base64.b64encode(source).decode("ascii")) + "),'<site-sync-receiver>','exec'))"
     command = ["/usr/bin/ssh", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
                "-o", "ConnectTimeout=" + str(profile["sshTimeoutSeconds"]), "-o", "ServerAliveInterval=15",
                "-o", "ServerAliveCountMax=2", profile["sshHost"],

@@ -82,9 +82,14 @@ When the user asks to publish a library or synchronize new scores, read
 [deployment](../../docs/DEPLOYMENT.md). Register the completed project with
 `library add --library ... --project ... --id ...`, then run
 `site sync --profile /absolute/private/site-profile.json` against the authorized
-destination. A sync exports and verifies the library, transfers changed files,
-activates only its owned service, verifies the public work/revision set, and
-restores the old deployment on activation failure. Review the receipt and actual
+destination. Read `publisherMode` before proceeding. A user LaunchAgent sync
+exports and verifies the library, transfers changed files, activates only its
+owned service, and restores the old deployment on activation failure.
+`isolated-manual` only stages a complete verified release under the destination's
+incoming directory and returns `pendingAdminActivation`; report the pending state
+and administrator command rather than claiming activation. Never invoke the
+isolation migration rollback as a score-release rollback, add sudoers access or
+read service secrets to bypass that boundary. Review the receipt and actual
 public browser flow before claiming delivery. Use `--check-only` for a plan with
 no remote mutation. Honor a host's existing readiness rule; `--ready` records an
 already satisfied confirmation, not a new authorization.
@@ -96,3 +101,16 @@ from sync; don't silently repoint DNS or reuse a personal research SSH account.
 Report which machines remain in the traffic/credential path when discussing
 isolation. A successful deploy does not establish full-score recognition or
 physical microphone accuracy.
+
+For optional website passwords, branding and feedback, keep `site-config.json`
+private and outside exports; use the deployment credential generator's getpass
+prompt or private password file, never a literal password argument. Verify final
+score/PDF/audio endpoints reject unauthenticated direct access, not just that the
+homepage opens a password dialog. Feedback stays in the private server inbox;
+creating email or GitHub Issues is a separate user-authorized action.
+
+If printed lyrics are absent or garbled in recognized MusicXML, read the original
+pages and save a revision/PDF-bound notation sidecar as described in deployment.
+Bind text to canonical measures, parts and original-page evidence; do not guess
+syllable-to-note alignment or rewrite accepted musical durations to add lyrics.
+Check later playback, rests, tied tails, paused seeks and PDF-to-score returns.

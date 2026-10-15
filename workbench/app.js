@@ -50,7 +50,7 @@ function seek(t){
  if(playback.selection && (t<playback.offset || t>playback.offset+playback.duration)){
   switchAudio({audio:score.audio,wav:'/assets/base.wav',start:0,duration:score.duration,selection:false},false,t);return;
  }
- audio.currentTime=Math.max(0,Math.min(playback.duration,t-playback.offset));update();
+ audio.currentTime=Math.max(0,Math.min(playback.duration,t-playback.offset));update({forceFollow:true});
 }
 async function switchAudio(result,autoplay=false,position=null){
  audio.pause();playback={offset:result.selection?result.start:0,duration:result.duration||score.duration,selection:!!result.selection,noteIds:result.selection?result.noteIds:null};
@@ -65,7 +65,7 @@ async function switchAudio(result,autoplay=false,position=null){
  active=-1;update();if(autoplay)await audio.play();
 }
 
-function update(){
+function update(playbackOptions={}){
  if(!score)return;
  if(playback.selection && !audio.paused && audio.currentTime>=playback.duration+0.4){audio.pause();audio.currentTime=playback.duration;}
  const t=Math.min(audio.currentTime,Math.max(0,playback.duration-(playback.selection?0.0001:0)))+playback.offset, adjusted=t+Number($('offset').value);
@@ -85,7 +85,7 @@ function update(){
  const box=$(`measure-${i}`),line=box?.querySelector('.playhead');
  if(line)line.style.left=`${Math.max(0,Math.min(1,(adjusted-m.start)/(m.end-m.start)))*100}%`;
  $('current-time').textContent=fmt(Math.min(audio.currentTime,playback.duration));$('seek').value=Math.min(audio.currentTime,playback.duration);
- interactive?.update(adjusted);
+ interactive?.update(adjusted,playbackOptions);
  $('now-measure').textContent=`第 ${m.number} 小节${playback.selection?' · 选区':''}`;
  if($('loop').checked&&!audio.paused){const bounds=loopBounds();if(bounds&&(t>=bounds[1]||t<bounds[0]-.1)){audio.currentTime=bounds[0];}}
 }
@@ -151,7 +151,7 @@ async function init(){
    const currentSettings=()=>({transpose:Number($('transpose').value),program:Number($('program').value),gains:gains(),practiceRate:Number($('speed').value),rhythmPolicy:$('draft-audio').checked?'draft':'strict'});
    // The main media element applies the speed once. Speaker-backed practice
    // requests separately synthesized timing and plays it at buffer rate one.
-   interactive=await initInteractive(canonical,{audio,seek,originalAvailable:score.pages.length>0,settings:()=>{const {practiceRate,...sound}=currentSettings();return sound;},onSelection:ids=>pitchPanel?.setSelection(ids),onAudio:result=>switchAudio({...result,selection:true},true),restoreFull:()=>switchAudio(fullAudio||{audio:score.audio,wav:'/assets/base.wav',duration:score.duration,selection:false}),activeNoteIds:()=>playback.selection?new Set(playback.noteIds):null,onCorrection:()=>location.reload(),follow:()=>$('follow').checked});
+   interactive=await initInteractive(canonical,{audio,seek,notationOverlayUrl:score.notationOverlay,originalAvailable:score.pages.length>0,settings:()=>{const {practiceRate,...sound}=currentSettings();return sound;},onSelection:ids=>pitchPanel?.setSelection(ids),onAudio:result=>switchAudio({...result,selection:true},true),restoreFull:()=>switchAudio(fullAudio||{audio:score.audio,wav:'/assets/base.wav',duration:score.duration,selection:false}),activeNoteIds:()=>playback.selection?new Set(playback.noteIds):null,onCorrection:()=>location.reload(),follow:()=>$('follow').checked});
    consolePanel?.syncPanels();
    if(typeof initMetronome==='function')metronome=initMetronome(canonical,{audio,getPlayback:()=>playback,getRate:()=>audio.playbackRate,getQuarterBpm:()=>{
     const t=audio.currentTime+playback.offset;const m=canonical.measures.find(m=>t>=m.start&&t<m.end)||canonical.measures[0];return MetronomeCore.tempoAt(canonical,m.onset).bpm;
@@ -166,9 +166,9 @@ async function init(){
   }
   audio.addEventListener('play',()=>{$('play').textContent='Ⅱ';$('play').setAttribute('aria-label','暂停');});
   audio.addEventListener('pause',()=>{$('play').textContent='▶';$('play').setAttribute('aria-label','播放');update();});
-  audio.addEventListener('timeupdate',update);audio.addEventListener('seeked',update);audio.addEventListener('error',()=>setStatus('音频加载失败，请检查本地服务是否仍在运行。'));
+  audio.addEventListener('timeupdate',update);audio.addEventListener('seeked',()=>update({forceFollow:true}));audio.addEventListener('error',()=>setStatus('音频加载失败，请检查本地服务是否仍在运行。'));
   $('play').onclick=toggle;$('restart').onclick=()=>seek($('loop').checked?(loopBounds()?.[0]||0):playback.offset);
-  $('seek').oninput=e=>{audio.currentTime=Number(e.target.value);update();};
+  $('seek').oninput=e=>{audio.currentTime=Number(e.target.value);update({forceFollow:true});};
   $('speed').oninput=e=>setPracticeRate(Number(e.target.value));
   $('tempo-bpm').onchange=e=>setPracticeRate(Number(e.target.value)*tempoUnits[$('tempo-unit').value]/initialQuarterBpm());
   $('tempo-bpm').oninput=e=>{const rate=Number(e.target.value)*tempoUnits[$('tempo-unit').value]/initialQuarterBpm();if(rate>=.25 && rate<=2)setPracticeRate(rate);};
@@ -176,7 +176,7 @@ async function init(){
   $('volume').oninput=e=>{audio.volume=Number(e.target.value);$('volume-value').textContent=`${Math.round(audio.volume*100)}%`;};
   $('offset').oninput=e=>{$('offset-value').textContent=`${Number(e.target.value).toFixed(1)} 秒`;update();};
   $('zoom').onchange=e=>{$('pages').style.width=`${e.target.value}%`;};
-  $('follow').onchange=()=>{active=-1;update();};$('apply').onclick=applyMix;$('reset').onclick=reset;
+  $('follow').onchange=()=>{active=-1;update({forceFollow:true});};$('apply').onclick=applyMix;$('reset').onclick=reset;
   $('loop').onchange=()=>{if($('loop').checked){const b=loopBounds();if(b)seek(b[0]);else $('loop').checked=false;}};
   ['program','transpose'].forEach(id=>$(id).onchange=()=>{setStatus('声音参数已修改，点击「应用并生成音频」生效。');pitchPanel?.updateSettings();});
   $('draft-audio').onchange=()=>{pitchPanel?.updateSettings();setStatus($('draft-audio').checked?'允许生成草稿参考音；待校对节奏会保留在音频和音准报告中。':'生成和音准练习仅使用通过节奏检查的片段。');};

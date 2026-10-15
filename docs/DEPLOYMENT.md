@@ -57,6 +57,80 @@ from a newer macOS onto an older Mac. The server can serve existing audio withou
 a synthesis engine, but a synthesis-enabled deployment must pass a real short
 selection render before acceptance.
 
+## Private website settings, per-score access and feedback
+
+Website identity and access are deployment settings. They are not part of an
+export, a source score, or the installed plugin. Create a private configuration
+outside all three:
+
+```sh
+python3 -m choir_assistant.deployment.security configure \
+  --output /absolute/private/site-config.json \
+  --site-title "Example Choir Library" \
+  --github-url https://github.com/example/project
+```
+
+The command prompts twice without echoing the password. For unattended initial
+provisioning, use `--password-file /absolute/private/password.txt` with a mode-0600
+single-line file, then remove that temporary file. There is intentionally no
+`--password` argument, environment-variable default, bundled production password
+or password printed in the result. Existing configuration files and symlinks
+are never overwritten. Keep all generated secret fields out of Git and logs.
+
+The resulting JSON has `schemaVersion: 1`, public `siteTitle`/`githubUrl`, and
+private `auth` fields: `salt`, `passwordHash`, `iterations`, `cookieSigningKey`
+and `sessionSeconds`. Password verification uses PBKDF2-HMAC-SHA256. The separate
+`internalHealthToken` authenticates local synchronization checks; it is not a
+browser password. Optional `feedback.maxBytes` and `feedback.maxEntries` bound
+the local inbox (defaults 10 MiB and 2,000 entries). `site_server.py --site-config`
+requires a regular file outside the frozen release with mode 0600, or 0640 when
+owned by a trusted administrator and the dedicated service group.
+
+Pass `--site-config /absolute/private/site-config.json` to the independent
+runtime, alongside an explicit `--origin https://scores.example.org`. A reverse
+proxy must preserve the intended Host/Origin relationship. Secure cookies require
+HTTPS; the server's HTTP port remains loopback-only. The homepage and basic
+catalog remain public. Each score requires its own signed, expiring HttpOnly,
+Secure, SameSite=Strict cookie. Authorizing one score does not authorize another.
+Final endpoints independently check access for models, SVGs, original pages,
+PDFs, audio, symbols and generated clips; hiding homepage links is not the
+access boundary. The full SQLite library download is disabled while access
+control is enabled. Passwords are not put in URLs, browser storage or frontend
+code. Password attempts have per-client and global limits; sessions default to
+12 hours. Rotating `cookieSigningKey` invalidates existing sessions.
+
+`GET /api/health` exposes only minimal health when access control is enabled.
+Detailed revisions are available only at loopback `/api/health/internal` with
+`Authorization: Bearer <internalHealthToken>` and without proxy headers. Never
+send that token to an external/public check. Public configuration returns only
+branding, feature flags and a CSRF token bound to a signed, random HttpOnly client
+cookie. Password login and feedback require that token and an allowed Origin.
+
+Feedback is a private local inbox, not an automatic email or GitHub Issue. Users
+can submit text from the homepage or any score; the score, measure and playback
+position are prefilled when available and remain editable. The server returns a
+receipt ID. Text and context are stored as plain JSON inside
+`RUNTIME/feedback.sqlite3` (0600), without cookies, passwords, client IPs or audio.
+The runtime bounds text length, frequency, entry count and database pages. It
+serves no endpoint for reading the inbox. A local maintainer can inspect it:
+
+```sh
+python3 -m choir_assistant.deployment.security feedback \
+  --database /absolute/site-runtime/feedback.sqlite3 --limit 50
+```
+
+This outputs JSON text. Treat feedback as untrusted user data; do not render it
+as HTML or execute commands copied from it. An installation without the plugin
+can use `sqlite3 -readonly /absolute/site-runtime/feedback.sqlite3` and query
+`SELECT id, created, payload FROM feedback ORDER BY created DESC LIMIT 50;`.
+
+Protect the entire site hostname from intermediary caching of score routes.
+The runtime sends `Cache-Control: private, no-store` for protected resources;
+check your gateway/CDN rules and purge any resources cached before access was
+enabled. No service worker or offline score cache is installed by this website.
+A previously downloaded score remains with its recipient; adding authentication
+does not revoke files users already saved.
+
 ## Configure a destination once
 
 The first deployment provisions an independent host namespace and user service.
@@ -119,6 +193,57 @@ interactive pages, original-PDF round trip, an actual short selected playback,
 and metronome controls. Preserve the JSON receipt and a screenshot with the
 private deployment records. Fixture tests do not establish real microphone or
 speaker interference accuracy.
+
+## Staging for a separately administered service account
+
+Set `publisherMode: "isolated-manual"` when the website runs under a dedicated
+service account and root owns its releases and LaunchDaemon. This mode never
+opens the retired user LaunchAgent, writes its plist, calls launchctl/sudo or
+reads service configuration. Copy the [isolated profile example](../examples/site-profile.isolated.example.json)
+outside the plugin. `remoteRoot`, `isolatedPublishHelper` and optional
+`isolatedAdminPython` are explicit deployment paths; no server name, helper code
+or administrator credential is bundled.
+
+The administrator must first provision the dedicated accounts and their sandbox,
+a root-owned, non-service-writable deployment root with `releases/`, and a
+root-owned `public-state.json`. Its exact contract is:
+
+```json
+{
+  "schemaVersion": 1,
+  "publisherMode": "isolated-manual",
+  "release": "release-<first-20-manifest-hash-characters>",
+  "manifestSha256": "<complete-64-character-sha256>",
+  "incomingRoot": "/absolute/deployment-root/incoming",
+  "phase": "committed"
+}
+```
+
+The deployment SSH account owns only `incoming/` and `incoming/releases/` (0700).
+The published release and every included file/directory must remain root-owned
+and not writable by services. The plugin verifies the current complete manifest
+and exact file set, sends changed files over SSH, copies reusable bytes into a
+new full incoming release, and verifies it before writing `incoming/request.json`.
+The request contains only schema version, target release/hash and expected current
+release. Its target ID is derived from the complete manifest hash.
+
+`site sync` returns `pendingAdminActivation: true`, `activated: false`, the
+staged path and a quoted administrator command. **The upload has not activated
+the site.** The administrator reviews and runs the configured root-owned helper
+on the server. The helper must copy into a root-private staging area, verify the
+complete pinned manifest again, run preflight code as the unprivileged service
+account, and activate only its own web service with recovery checks. No sudoers
+entry or web-accessible privileged endpoint is created. This deliberate final
+administrator step preserves the service-account boundary.
+
+`site check` verifies the administrator's public state, frozen release hashes and
+minimal external HTTPS health. It explicitly reports that complete internal
+runtime verification still requires the administrator. Concurrent activation
+causes compare-and-swap checks to fail instead of reporting an unintended release.
+For this mode, `site rollback` is unsupported: an isolation installer's migration
+rollback may restore original service accounts and is not a score-release rollback.
+Do not substitute it. A destination needs its own reviewed release rollback
+procedure before offering that operation.
 
 ## Network and account boundary
 

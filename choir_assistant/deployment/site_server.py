@@ -6,8 +6,14 @@ Source recognition, score editing, and engraving stay on the authoring machine.
 from __future__ import annotations
 
 import argparse
+import base64
+import hmac
+import ipaddress
+import secrets
+from http.cookies import SimpleCookie
+from collections import OrderedDict
 from contextlib import closing
-from hashlib import sha256
+from hashlib import sha256, pbkdf2_hmac
 import importlib.util
 import json
 import math
@@ -38,6 +44,10 @@ UI_FILES = {
 }
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 GENERATED_PATH = re.compile(r"[a-f0-9]{32}/mix\.(?:wav|mid|mp3)\Z")
+
+
+class AuthenticationRequired(ValueError):
+    pass
 
 
 class ResourceBusy(ValueError):
@@ -168,10 +178,152 @@ def load_module(path, name):
     return module
 
 
+
+class SiteAccess:
+    """Private, deployment-owned identity settings, never part of an export."""
+    def __init__(self, config, runtime, release_root):
+        self.config = {}
+        if config:
+            path = Path(config).resolve()
+            try:
+                path.relative_to(release_root)
+            except ValueError:
+                pass
+            else:
+                raise ValueError("站点私有配置必须位于冻结发布目录之外")
+            if not path.is_file() or Path(config).is_symlink() or path.stat().st_mode & 0o037:
+                raise ValueError("站点私有配置须为独立普通文件，权限为 0600 或可信服务组只读的 0640")
+            self.config = read_json(path)
+            if not isinstance(self.config, dict) or self.config.get("schemaVersion") != 1:
+                raise ValueError("站点私有配置版本无效")
+        self.title = self.config.get("siteTitle", "合唱曲库")
+        self.github = self.config.get("githubUrl", "")
+        if not isinstance(self.title, str) or not 1 <= len(self.title) <= 80:
+            raise ValueError("站点标题无效")
+        parsed = urlsplit(self.github)
+        if self.github and (parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password):
+            raise ValueError("项目链接须为 HTTPS 地址")
+        auth = self.config.get("auth")
+        self.enabled = auth is not None
+        self.internal_health_token = self.config.get("internalHealthToken", "")
+        if self.enabled and (not isinstance(self.internal_health_token, str) or not 32 <= len(self.internal_health_token) <= 256):
+            raise ValueError("启用认证时须配置独立的内部健康检查令牌")
+        self.key = secrets.token_bytes(32)
+        self.session_seconds = 43200
+        if self.enabled:
+            try:
+                self.salt = bytes.fromhex(auth["salt"])
+                self.password_hash = bytes.fromhex(auth["passwordHash"])
+                self.key = bytes.fromhex(auth["cookieSigningKey"])
+                self.iterations = auth.get("iterations", 310000)
+                self.session_seconds = auth.get("sessionSeconds", 43200)
+                assert 16 <= len(self.salt) <= 64 and len(self.password_hash) == 32 and len(self.key) == 32
+                assert type(self.iterations) is int and 100000 <= self.iterations <= 2000000
+                assert type(self.session_seconds) is int and 300 <= self.session_seconds <= 604800
+            except (KeyError, TypeError, ValueError, AssertionError):
+                raise ValueError("站点认证配置无效") from None
+        feedback = self.config.get("feedback", {})
+        self.feedback_bytes = feedback.get("maxBytes", 10 * 1024 * 1024)
+        self.feedback_entries = feedback.get("maxEntries", 2000)
+        if type(self.feedback_bytes) is not int or not 65536 <= self.feedback_bytes <= 100 * 1024 * 1024:
+            raise ValueError("反馈容量无效")
+        if type(self.feedback_entries) is not int or not 1 <= self.feedback_entries <= 100000:
+            raise ValueError("反馈数量上限无效")
+        self.feedback_path = runtime / "feedback.sqlite3"
+        self.guard = threading.Lock()
+        self.rates = OrderedDict()
+        self.password_slots = threading.BoundedSemaphore(2)
+        self.feedback_enabled = bool(config)
+        if self.feedback_enabled:
+            # No score data, cookies, passwords, request headers or client IPs are stored.
+            with closing(sqlite3.connect(str(self.feedback_path))) as db:
+                db.execute("CREATE TABLE IF NOT EXISTS feedback (id TEXT PRIMARY KEY, created INTEGER NOT NULL, payload TEXT NOT NULL, bytes INTEGER NOT NULL)")
+                db.commit()
+            os.chmod(str(self.feedback_path), 0o600)
+
+    @staticmethod
+    def cookie_name(work):
+        return "__Host-choir-work-" + sha256(work.encode()).hexdigest()[:20]
+
+    def token(self, purpose, subject, seconds):
+        value = json.dumps([purpose, subject, int(time.time()) + seconds, secrets.token_hex(16)], separators=(",", ":")).encode()
+        payload = base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+        return payload + "." + hmac.new(self.key, payload.encode(), sha256).hexdigest()
+
+    def valid_token(self, value, purpose, subject):
+        try:
+            payload, signature = value.split(".", 1)
+            expected = hmac.new(self.key, payload.encode(), sha256).hexdigest()
+            if not hmac.compare_digest(signature, expected):
+                return False
+            data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+            return (isinstance(data, list) and len(data) == 4 and isinstance(data[3], str) and len(data[3]) == 32 and data[0] == purpose and data[1] == subject
+                    and type(data[2]) is int and time.time() < data[2] <= time.time() + 604801)
+        except (ValueError, TypeError, UnicodeError):
+            return False
+
+    def rate(self, bucket, limit, window):
+        now = time.monotonic()
+        with self.guard:
+            while self.rates and (len(self.rates) >= 4096 or next(iter(self.rates.values()))[0] <= now - 3600):
+                self.rates.popitem(last=False)
+            old, count = self.rates.get(bucket, (now, 0))
+            if now - old >= window:
+                old, count = now, 0
+            if count >= limit:
+                raise ResourceBusy("请求过于频繁，请稍后再试")
+            self.rates[bucket] = old, count + 1
+            self.rates.move_to_end(bucket)
+
+    def password_matches(self, password, client):
+        self.rate("login-ip:" + client, 8, 900)
+        self.rate("login-global", 120, 60)
+        if not self.password_slots.acquire(blocking=False):
+            raise ResourceBusy("认证繁忙，请稍后重试")
+        try:
+            if not isinstance(password, str) or not 1 <= len(password) <= 256:
+                return False
+            candidate = pbkdf2_hmac("sha256", password.encode("utf-8"), self.salt, self.iterations)
+            return hmac.compare_digest(candidate, self.password_hash)
+        finally:
+            self.password_slots.release()
+
+    def feedback(self, data, client, works):
+        if not self.feedback_enabled:
+            raise ValueError("站点尚未启用反馈")
+        self.rate("feedback-ip:" + client, 5, 600)
+        self.rate("feedback-global", 60, 600)
+        text = data.get("text")
+        if not isinstance(text, str) or not 1 <= len(text.strip()) <= 4000:
+            raise ValueError("反馈内容须为 1–4000 个字符")
+        payload = {"text": text.strip()}
+        for key, length in (("work", 128), ("movement", 128), ("measure", 80), ("position", 80)):
+            value = data.get(key, "")
+            if not isinstance(value, str) or len(value) > length or any(ord(c) < 32 for c in value):
+                raise ValueError("反馈位置无效")
+            payload[key] = value
+        if payload["work"] and payload["work"] not in works:
+            raise ValueError("反馈曲目不存在")
+        raw = json.dumps(payload, ensure_ascii=False)
+        size = len(raw.encode("utf-8"))
+        ident = uuid.uuid4().hex
+        with self.guard, closing(sqlite3.connect(str(self.feedback_path))) as db:
+            db.execute("PRAGMA max_page_count={}".format(self.feedback_bytes // 4096))
+            count, total = db.execute("SELECT count(*), coalesce(sum(bytes), 0) FROM feedback").fetchone()
+            if count >= self.feedback_entries or total + size > self.feedback_bytes // 2:
+                raise ResourceBusy("反馈箱已满，请稍后重试")
+            try:
+                db.execute("INSERT INTO feedback VALUES (?, ?, ?, ?)", (ident, int(time.time()), raw, size))
+                db.commit()
+            except sqlite3.OperationalError:
+                raise ResourceBusy("反馈箱暂不可用，请稍后重试") from None
+        return ident
+
+
 class ScoreSite:
     def __init__(self, root, runtime, fluidsynth=None, soundfont=None, ffmpeg=None, origins=(),
                  max_render_seconds=600, cache_bytes=512 * 1024 * 1024, cache_ttl=3600,
-                 cache_grace=120, min_render_interval=2):
+                 cache_grace=120, min_render_interval=2, site_config=None):
         self.root = Path(root).resolve()
         verify_release(self.root)
         self.runtime = Path(runtime).resolve()
@@ -182,6 +334,7 @@ class ScoreSite:
         else:
             raise ValueError("运行缓存必须位于冻结站点目录之外")
         self.runtime.mkdir(parents=True, exist_ok=True)
+        self.access = SiteAccess(site_config, self.runtime, self.root)
         for label, value, minimum, maximum in (
             ("max_render_seconds", max_render_seconds, 1, 1800),
             ("cache_bytes", cache_bytes, 1024 * 1024, 10 * 1024 ** 3),
@@ -409,10 +562,87 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def end_headers(self):
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("Permissions-Policy", "camera=(), geolocation=(), microphone=(self)")
+        for cookie in getattr(self, "response_cookies", []):
+            self.send_header("Set-Cookie", cookie)
+        super().end_headers()
+
+    def cookies(self):
+        result = SimpleCookie()
+        try:
+            result.load(self.headers.get("Cookie", ""))
+        except Exception:
+            return {}
+        return {name: item.value for name, item in result.items()}
+
+    def set_cookie(self, name, value, seconds):
+        if not hasattr(self, "response_cookies"):
+            self.response_cookies = []
+        self.response_cookies.append("{}={}; Path=/; Max-Age={}; HttpOnly; Secure; SameSite=Strict".format(name, value, seconds))
+
+    def client_identity(self):
+        # Cloudflare headers are trusted only at the loopback tunnel origin.
+        host = self.client_address[0]
+        if ipaddress.ip_address(host).is_loopback and self.headers.get("X-Forwarded-Proto") == "https":
+            candidate = self.headers.get("CF-Connecting-IP", "")
+            try:
+                return str(ipaddress.ip_address(candidate))
+            except ValueError:
+                pass
+        return host
+
+    def authenticated(self, work):
+        access = self.site.access
+        return not access.enabled or access.valid_token(self.cookies().get(access.cookie_name(work), ""), "work", work)
+
+    def require_work(self, work):
+        if not self.authenticated(work):
+            raise AuthenticationRequired("请先输入此曲目的访问密码")
+
+    def local_maintenance(self):
+        value = self.headers.get("Authorization", "")
+        secret = self.site.access.internal_health_token
+        return (ipaddress.ip_address(self.client_address[0]).is_loopback and bool(secret)
+                and len(value) < 512 and hmac.compare_digest(value, "Bearer " + secret)
+                and not any(self.headers.get(k) for k in ("CF-Connecting-IP", "CF-Ray", "Forwarded", "X-Forwarded-For", "X-Forwarded-Proto")))
+
+    def csrf_valid(self, data):
+        token = data.get("csrfToken", "")
+        client = self.cookies().get("__Host-choir-client", "")
+        return (isinstance(token, str) and len(token) < 1024 and len(client) < 1024
+                and self.site.access.valid_token(client, "client", "site")
+                and self.site.access.valid_token(token, "csrf", sha256(client.encode()).hexdigest()))
+
+    def public_config(self):
+        client = self.cookies().get("__Host-choir-client", "")
+        if not self.site.access.valid_token(client, "client", "site"):
+            client = self.site.access.token("client", "site", 3600)
+            self.set_cookie("__Host-choir-client", client, 3600)
+        token = self.site.access.token("csrf", sha256(client.encode()).hexdigest(), 3600)
+        return {"siteTitle": self.site.access.title, "githubUrl": self.site.access.github,
+                "authRequired": self.site.access.enabled, "feedbackEnabled": self.site.access.feedback_enabled,
+                "csrfToken": token}
+
+    def public_catalog(self):
+        value = read_json(self.site.root / "catalog.json")
+        # Only homepage metadata is public; score content and source/download
+        # routes are always authorized independently at their final endpoint.
+        allowed = {"id", "title", "parts", "status", "measures", "notes", "rests", "duration",
+                   "sourceReviewed", "blockingMeasures"}
+        works = []
+        for work in value.get("works", []):
+            item = {key: work[key] for key in allowed if key in work}
+            item["movements"] = [{key: movement[key] for key in ("id", "title", "revision") if key in movement}
+                                 for movement in work.get("movements", [])]
+            works.append(item)
+        return {"schemaVersion": value.get("schemaVersion", 1), "totals": value.get("totals", {}), "works": works}
+
     def bytes_response(self, data, mime="application/json; charset=utf-8", status=200, download=None):
         self.close_connection = True
         size = len(data)
-        start, end, partial = self._range(size)
+        start, end, partial = self._range(size) if status == 200 else (0, size - 1, False)
         if start is None:
             return
         self.send_response(206 if partial else status)
@@ -478,6 +708,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Connection", "close")
             self.send_header("Referrer-Policy", "same-origin")
+            self.send_header("Cache-Control", "private, no-store")
             if partial:
                 self.send_header("Content-Range", "bytes {}-{}/{}".format(start, end, size))
             if download:
@@ -515,14 +746,24 @@ class Handler(BaseHTTPRequestHandler):
         try:
             path, query, selected, prefix = self.route()
             if selected is None:
+                if path == "/api/site-config":
+                    return self.json_response(self.public_config())
+                if path == "/api/health/internal":
+                    if not self.local_maintenance():
+                        return self.json_response({"error": "不存在的页面"}, 404)
+                    return self.json_response(self.site.health())
                 if path == "/api/health":
+                    if self.site.access.enabled:
+                        return self.json_response({"service": "choir-score-library-site", "readOnly": True, "status": "ok"})
                     return self.json_response(self.site.health())
                 if path in ("/api/catalog", "/catalog.json"):
-                    return self.file_response(self.site.root / "catalog.json")
+                    return self.json_response(self.public_catalog())
                 if path == "/api/symbols":
+                    self.require_work(query.get("work", ""))
                     return self.json_response(self.site.symbols(query))
                 if path == "/api/download":
                     item, _ = self.site.select(query.get("work", ""), query.get("movement"))
+                    self.require_work(item["work"]["id"])
                     kind = query.get("type")
                     if kind == "pdf":
                         target = inside(self.site.root, item["work"]["sourcePdf"])
@@ -541,11 +782,14 @@ class Handler(BaseHTTPRequestHandler):
                         target = inside(item["bundle"] / "assets", names[kind])
                     return self.file_response(target, True)
                 if path == "/library.sqlite3":
+                    if self.site.access.enabled:
+                        return self.json_response({"error": "整库下载未对外开放；请按曲目查询"}, 403)
                     return self.file_response(self.site.root / "library.sqlite3", True)
                 root_files = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/app.css": "app.css"}
                 if path in root_files:
                     return self.file_response(self.site.root / root_files[path])
             else:
+                self.require_work(selected["work"]["id"])
                 if path == "/api/health":
                     return self.json_response({"service": "sheet-to-audio-workbench", "revision": selected["model"]["revision"], "readOnly": True})
                 if path == "/api/calibration":
@@ -555,6 +799,12 @@ class Handler(BaseHTTPRequestHandler):
                 if path in ("/assets/interactive.json", "/assets/score.json"):
                     value = selected["model"] if path.endswith("interactive.json") else selected["projection"]
                     return self.json_response(web_projection(public_projection(value), prefix))
+                if path == "/assets/notation-overlay.json":
+                    relative = selected["movement"].get("notationOverlay")
+                    if not relative:
+                        return self.json_response({"error": "此曲目暂无谱面附注"}, 404)
+                    overlay = read_json(inside(self.site.root, relative))
+                    return self.json_response(web_projection(public_projection(overlay), prefix))
                 if path == "/assets/validation.json":
                     return self.json_response(public_projection(read_json(selected["bundle"] / "assets/validation.json")))
                 filename = "index.html" if path == "/" else path[1:]
@@ -579,6 +829,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self.json_response({"error": "不存在的资源"}, 404)
                     return self.file_response(inside(cache, relative))
             return self.json_response({"error": "不存在的页面"}, 404)
+        except AuthenticationRequired as error:
+            return self.json_response({"error": str(error), "authenticationRequired": True}, 401)
         except (ValueError, KeyError, TypeError, json.JSONDecodeError):
             return self.json_response({"error": "请求参数或路径无效"}, 400)
         except (BrokenPipeError, ConnectionResetError):
@@ -590,6 +842,8 @@ class Handler(BaseHTTPRequestHandler):
         # This only prevents browser cross-origin writes. It is not identity or
         # access control: non-browser callers can omit/spoof Origin entirely.
         origin = self.headers.get("Origin")
+        if self.site.access.enabled and not origin:
+            return False
         if origin:
             if self.site.origins:
                 return origin in self.site.origins
@@ -605,7 +859,7 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/api/correction", "/api/calibration"):
                 self.close_connection = True
                 return self.json_response({"error": "排练网站为只读版本；请联系维护者发布曲谱修订"}, 403)
-            if not ((selected is None and path == "/api/open") or (selected and path in ("/api/render", "/api/selection"))):
+            if not ((selected is None and path in ("/api/open", "/api/login", "/api/feedback")) or (selected and path in ("/api/render", "/api/selection"))):
                 self.close_connection = True
                 return self.json_response({"error": "不存在的操作"}, 404)
             if self.headers.get_content_type() != "application/json":
@@ -624,9 +878,25 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(raw, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("参数必须为有限数值")))
             if not isinstance(data, dict):
                 raise ValueError("参数必须为对象")
+            if selected is None and path in ("/api/login", "/api/feedback"):
+                if not self.csrf_valid(data):
+                    return self.json_response({"error": "页面验证已过期，请刷新后重试"}, 403)
+                if path == "/api/feedback":
+                    ident = self.site.access.feedback(data, self.client_identity(), self.site.release["works"])
+                    return self.json_response({"receipt": ident, "message": "反馈已保存，感谢帮助改进曲库"}, 201)
+                work = data.get("work", "")
+                self.site.select(work)
+                if self.site.access.enabled:
+                    if not self.site.access.password_matches(data.get("password"), self.client_identity()):
+                        return self.json_response({"error": "密码不正确"}, 401)
+                    cookie = self.site.access.cookie_name(work)
+                    self.set_cookie(cookie, self.site.access.token("work", work, self.site.access.session_seconds), self.site.access.session_seconds)
+                return self.json_response({"authenticated": True, "work": work})
             if selected is None:
                 item, url = self.site.select(data.get("work", ""), data.get("movement"))
+                self.require_work(item["work"]["id"])
                 return self.json_response({"url": url, "revision": item["model"]["revision"], "work": item["work"]["id"]})
+            self.require_work(selected["work"]["id"])
             if not self.site.lock.acquire(blocking=False):
                 return self.json_response({"error": "正在生成音频，请稍后再试"}, 409)
             try:
@@ -634,12 +904,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json_response(result)
             finally:
                 self.site.lock.release()
+        except AuthenticationRequired as error:
+            return self.json_response({"error": str(error), "authenticationRequired": True}, 401)
         except ResourceBusy as error:
             return self.json_response({"error": str(error)}, 429)
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
             # Playback/validation errors contain musical facts, never host paths.
             return self.json_response({"error": str(error) if isinstance(error, ValueError) else "请求参数无效"}, 400)
-        except (RuntimeError, OSError, subprocess.SubprocessError):
+        except (RuntimeError, OSError, sqlite3.Error, subprocess.SubprocessError):
             return self.json_response({"error": "音频生成失败，请稍后重试或联系维护者"}, 503)
 
 
@@ -697,6 +969,7 @@ def main(argv=None):
     parser.add_argument("--fluidsynth", help="FluidSynth 绝对路径；省略则仅提供已生成音频")
     parser.add_argument("--soundfont", help="SF2 音色库路径；与 FluidSynth 配合使用")
     parser.add_argument("--ffmpeg", help="可选 ffmpeg 绝对路径；未配置时使用 WAV")
+    parser.add_argument("--site-config", help="发布目录之外、权限 0600/0640 的站点私有 JSON 配置")
     parser.add_argument("--origin", action="append", default=[], help="允许的外部 HTTPS 来源，可重复")
     parser.add_argument("--max-render-seconds", type=float, default=600)
     parser.add_argument("--cache-mib", type=int, default=512)
@@ -711,7 +984,7 @@ def main(argv=None):
     try:
         site = ScoreSite(args.root, args.runtime, args.fluidsynth, args.soundfont, args.ffmpeg, args.origin,
                          args.max_render_seconds, args.cache_mib * 1024 ** 2, args.cache_ttl,
-                         args.cache_grace, args.min_render_interval)
+                         args.cache_grace, args.min_render_interval, args.site_config)
     except (ValueError, OSError, KeyError, json.JSONDecodeError) as error:
         parser.error(str(error))
     server = make_server(site, args.bind, args.port, args.max_connections, args.read_timeout)

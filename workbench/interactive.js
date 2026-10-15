@@ -14,7 +14,48 @@ async function loadNotationAssets(pages, revision, fetchAsset = fetch, timeoutMs
     }
   }));
 }
-if (typeof module !== 'undefined' && module.exports) module.exports = { loadNotationAssets };
+function measureAtTime(measures, time) {
+  if (!Number.isFinite(Number(time))) return null;
+  const position = Number(time);
+  const current = measures.find(measure => position >= Number(measure.start) && position < Number(measure.end));
+  if (current) return current;
+  const last = measures[measures.length - 1];
+  return last && position >= Number(last.end) ? last : null;
+}
+function mappedMeasure(ids, symbols) {
+  const numbers = new Set(ids.map(id => {
+    const symbol = symbols.get(id);
+    return symbol ? symbol.measureIndex ?? symbol.measure : undefined;
+  }).filter(value => value !== undefined));
+  // Never infer a number from the renderer's random measure ID or DOM order.
+  return numbers.size === 1 ? [...numbers][0] : null;
+}
+function validateNotationOverlay(overlay, model) {
+  if (!overlay || overlay.schemaVersion !== 1 || overlay.revision !== model.revision || !Array.isArray(overlay.measureLyrics)) throw new Error('唱词版本与当前曲谱不一致');
+  const measures = new Set((model.measures || []).map(measure => Number(measure.index ?? measure.number)));
+  for (const lyric of overlay.measureLyrics) {
+    if (!measures.has(Number(lyric.measure)) || typeof lyric.part !== 'string' || !Array.isArray(lyric.lines) || lyric.lines.some(line => typeof line !== 'string' || line.length > 1000)) throw new Error('唱词小节或文本格式无效');
+  }
+  return overlay;
+}
+function measureFollowAction({ view, playing, forceFollow, follow, current, outside, key, previousKey, jumped }) {
+  if (view !== 'notation' || (!playing && !forceFollow) || !follow || !current) return null;
+  if (!outside || (previousKey === key && !forceFollow && !jumped)) return null;
+  return forceFollow || jumped ? 'auto' : 'smooth';
+}
+async function loadNotationOverlay(url, model, fetchAsset = fetch, timeoutMs = 15000) {
+  if (!url) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchAsset(url, { cache: 'no-cache', signal: controller.signal });
+    if (!response.ok) throw new Error(`唱词加载失败（${response.status}）`);
+    return validateNotationOverlay(await response.json(), model);
+  } catch (error) {
+    return { error: error.name === 'AbortError' ? '唱词加载超时，可重新加载' : error.message || String(error) };
+  } finally { clearTimeout(timer); }
+}
+if (typeof module !== 'undefined' && module.exports) module.exports = { loadNotationAssets, loadNotationOverlay, measureAtTime, mappedMeasure, validateNotationOverlay, measureFollowAction };
 (() => {
   'use strict';
   if (typeof window === 'undefined') return;
@@ -37,6 +78,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
     let model = data;
     let notes = new Map();
     const elements = new Map();
+    const measureElements = new Map();
+    const measureMarkers = new Map();
     let selected = new Set();
     let sounding = new Set();
     let view = 'notation';
@@ -46,6 +89,9 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
     let previewContext;
     let previewVoice;
     let lastFollowed = '';
+    let lastTime = 0;
+    let activeMeasure = null;
+    let notationOverlay = null;
     let svgLoadToken = 0;
 
     host.className = 'interactive-host';
@@ -61,6 +107,9 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
     const badge = node('span', 'notation-badge');
     toolbar.append(tabs, badge);
     const hint = node('div', 'notation-guide', '单击音符快速试听 · 拖动框选 · Shift / ⌘ 加选 · 触屏可点选');
+    const lyricsNow = node('div', 'notation-lyrics-current');
+    lyricsNow.setAttribute('aria-label', '当前小节唱词');
+    lyricsNow.hidden = true;
     const workspace = node('div', 'notation-workspace');
     const stage = node('div', 'notation-stage');
     stage.id = 'interactive-stage';
@@ -117,7 +166,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
     const auditHeading = node('summary');
     const auditBody = node('div', 'notation-audit-body');
     audit.append(auditHeading, auditBody);
-    host.append(toolbar, hint, workspace, controls, editor, audit);
+    host.append(toolbar, hint, lyricsNow, workspace, controls, editor, audit);
 
     const setStatus = (text, error = false) => { status.textContent = text; status.classList.toggle('is-error', error); };
     const settings = () => typeof hooks.settings === 'function' ? hooks.settings() : {};
@@ -139,6 +188,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
       originalTab.classList.toggle('is-current', view === 'original');
       notationTab.setAttribute('aria-pressed', String(view === 'notation'));
       originalTab.setAttribute('aria-pressed', String(view === 'original'));
+      lastFollowed = '';
+      if (view === 'notation' && measureElements.size) requestAnimationFrame(() => update(lastTime, { forceFollow: true }));
     }
     notationTab.addEventListener('click', () => setView('notation'));
     originalTab.addEventListener('click', () => setView('original'));
@@ -400,11 +451,66 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
       const reportLink = node('a', '', '下载完整结构化与校验数据 ↗'); reportLink.href = '/assets/interactive.json'; reportLink.download = ''; auditBody.append(reportLink);
     }
 
+    function annotateMeasures() {
+      const symbols = new Map([...(model.notes || []), ...(model.rests || [])].map(symbol => [symbol.id, symbol]));
+      const svgNode = (name, attributes) => {
+        const element = document.createElementNS('http://www.w3.org/2000/svg', name);
+        for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
+        return element;
+      };
+      for (const measure of pages.querySelectorAll('g.measure:not(.bounding-box)')) {
+        const number = mappedMeasure([...measure.querySelectorAll('[id]')].map(element => element.id), symbols);
+        if (number === null) continue;
+        const canonical = model.measures.find(item => Number(item.index ?? item.number) === Number(number));
+        if (!canonical) continue;
+        measure.dataset.measureIndex = String(number);
+        measure.dataset.measureNumber = String(canonical.number);
+        measureElements.set(Number(number), measure);
+        // Use the actual staff boundary, excluding clefs, ledger lines and lyrics.
+        const staffs = [...measure.querySelectorAll(':scope > g.staff:not(.bounding-box)')];
+        const first = staffs[0], last = staffs[staffs.length - 1];
+        const firstLines = first ? [...first.children].filter(element => element.localName === 'path') : [];
+        const lastLines = last ? [...last.children].filter(element => element.localName === 'path') : [];
+        if (!firstLines.length || !lastLines.length) continue;
+        const start = firstLines[0].getBBox(), bottom = lastLines[lastLines.length - 1].getBBox();
+        const x = start.x, y = start.y, width = start.width, height = Math.max(1, bottom.y - y);
+        for (const existing of measure.querySelectorAll(':scope > .mNum')) existing.remove();
+        const label = svgNode('text', { x: x + 35, y: y - 170, class: 'notation-measure-number', 'font-size': 275 });
+        label.textContent = String(canonical.number);
+        measure.append(label);
+        const area = svgNode('rect', { x, y: y - 60, width, height: height + 120, class: 'notation-measure-highlight' });
+        const line = svgNode('line', { x1: x, x2: x, y1: y - 60, y2: y + height + 60, class: 'notation-measure-playhead' });
+        measure.prepend(area); measure.append(line);
+        measureMarkers.set(Number(number), { element: measure, anchor: firstLines[0], line, x, width });
+      }
+      host.dataset.mappedMeasures = String(measureElements.size);
+      if (!notationOverlay) return;
+      for (const wrapper of pages.children) {
+        const numbers = new Set([...wrapper.querySelectorAll('[data-measure-index]')].map(element => Number(element.dataset.measureIndex)));
+        const lyrics = notationOverlay.measureLyrics.filter(lyric => numbers.has(Number(lyric.measure)));
+        if (!lyrics.length) continue;
+        const details = node('details', 'notation-page-lyrics');
+        details.open = false;
+        details.append(node('summary', '', '本页唱词 · 按小节与声部'));
+        for (const lyric of lyrics) {
+          const row = node('button', 'notation-lyric-row');
+          row.dataset.lyricMeasure = String(lyric.measure);
+          const current = model.measures.find(measure => Number(measure.index ?? measure.number) === Number(lyric.measure));
+          row.append(node('strong', '', `${current?.number ?? lyric.measure} · ${lyric.part}`), node('span', '', lyric.lines.join(' / ')));
+          row.addEventListener('click', () => {
+            if (current) hooks.seek?.(Number(current.start));
+          });
+          details.append(row);
+        }
+        wrapper.append(details);
+      }
+    }
+
     async function refresh(nextModel = model) {
       model = nextModel;
       notes = new Map((model.notes || []).filter(note => note.pitch !== null && note.pitch !== undefined).map(note => [note.id, note]));
       selected = new Set([...selected].filter(id => notes.has(id)));
-      sounding.clear(); elements.clear(); lastFollowed = '';
+      sounding.clear(); elements.clear(); measureElements.clear(); measureMarkers.clear(); lastFollowed = ''; activeMeasure = null;
       badge.textContent = `${notes.size} 个可互动音符 · 结构化识谱`;
       partChoice.replaceChildren();
       const allParts = node('option', '', '全部声部'); allParts.value = ''; partChoice.append(allParts);
@@ -417,7 +523,9 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
       const token = ++svgLoadToken;
       pages.replaceChildren(node('p', 'notation-loading', '正在加载互动谱…'));
       const interactivePages = model.pagesInteractive || model.interactivePages || [];
-      const assets = await loadNotationAssets(interactivePages, model.revision);
+      const overlayRequest = loadNotationOverlay(hooks.notationOverlayUrl, model);
+      const [assets, overlay] = await Promise.all([loadNotationAssets(interactivePages, model.revision), overlayRequest]);
+      notationOverlay = overlay && !overlay.error ? overlay : null;
       if (token !== svgLoadToken) return;
       let failedPages = 0;
       const loaded = assets.map(asset => {
@@ -443,6 +551,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
       });
       if (token !== svgLoadToken) return;
       pages.replaceChildren(...loaded);
+      if (notationOverlay?.replaceUnverifiedLyrics) for (const element of pages.querySelectorAll('g.verse')) element.remove();
+      annotateMeasures();
       let missing = 0;
       for (const element of pages.querySelectorAll('g.note, [data-note-id]')) {
         const id = element.dataset.noteId || element.id;
@@ -463,29 +573,65 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
         setStatus('互动谱尚未生成，可先使用原谱对照。', true);
       }
       else if (failedPages) setStatus(`${failedPages} 页加载失败，可在对应页面重新加载；已载入页面仍可点选。`, true);
+      else if (overlay?.error) setStatus(`${overlay.error}；可使用原 PDF 对照唱词。`, true);
+      else if (measureElements.size < (model.measures || []).length) setStatus(`已连接 ${measureElements.size} / ${model.measures.length} 个小节；缺失小节暂不能跟随定位，可重新加载。`, true);
       else if (elements.size < notes.size) setStatus(`已连接 ${elements.size} / ${notes.size} 个音符；未映射音符暂不能在谱面点选。`, true);
       else setStatus('互动谱已就绪。单击音符快速试听，拖动框选后合成真实音色片段。');
       host.dataset.mappedNotes = String(elements.size); host.dataset.unmappedSvgNotes = String(missing);
       updateSelection();
+      update(lastTime, { forceFollow: true });
     }
 
     function update(globalTime, playbackOverride = {}) {
       const time = Number(globalTime);
       if (!Number.isFinite(time)) return;
+      const jumped = Math.abs(time - lastTime) > 1;
+      lastTime = time;
       const playing = typeof playbackOverride.playing === 'boolean' ? playbackOverride.playing : !hooks.audio?.paused;
       const activeNoteIds = playbackOverride.noteIds ?? (typeof hooks.activeNoteIds === 'function' ? hooks.activeNoteIds() : null);
       const whitelist = activeNoteIds == null ? null : activeNoteIds instanceof Set ? activeNoteIds : new Set(activeNoteIds);
       const next = new Set();
-      for (const [id, note] of notes) if (playing && (!whitelist || whitelist.has(id)) && time >= Number(note.start) && time < Number(note.end)) next.add(id);
+      const positioned = [];
+      for (const [id, note] of notes) if ((!whitelist || whitelist.has(id)) && time >= Number(note.start) && time < Number(note.end)) {
+        positioned.push(note);
+        if (playing) next.add(id);
+      }
       for (const id of sounding) if (!next.has(id)) elements.get(id)?.classList.remove('is-sounding');
       for (const id of next) if (!sounding.has(id)) elements.get(id)?.classList.add('is-sounding');
       sounding = next;
-      if (view !== 'notation' || !playing || !document.getElementById('follow')?.checked || !next.size) return;
-      const first = [...next].find(id => elements.has(id));
-      if (!first || first === lastFollowed) return;
-      lastFollowed = first;
-      const element = elements.get(first), rect = element.getBoundingClientRect(), viewport = stage.getBoundingClientRect();
-      if (rect.top < viewport.top + 25 || rect.bottom > viewport.bottom - 35) stage.scrollTo({ top: stage.scrollTop + rect.top - viewport.top - 80, behavior: 'smooth' });
+      const current = measureAtTime(model.measures || [], time);
+      const number = current ? Number(current.index ?? current.number) : null;
+      if (activeMeasure !== number) {
+        measureElements.get(activeMeasure)?.classList.remove('is-current-measure');
+        measureElements.get(number)?.classList.add('is-current-measure');
+        activeMeasure = number;
+        const lyrics = notationOverlay?.measureLyrics.filter(lyric => Number(lyric.measure) === number) || [];
+        lyricsNow.replaceChildren(); lyricsNow.hidden = !lyrics.length;
+        for (const lyric of lyrics) lyricsNow.append(node('span', '', `${lyric.part} · ${lyric.lines.join(' / ')}`));
+        if (lyrics.length) lyricsNow.prepend(node('strong', '', `第 ${current.number} 小节`));
+        for (const row of pages.querySelectorAll('[data-lyric-measure]')) row.classList.toggle('is-current', Number(row.dataset.lyricMeasure) === number);
+      }
+      const marker = measureMarkers.get(number);
+      if (current && marker) {
+        const fraction = Math.max(0, Math.min(1, (time - Number(current.start)) / (Number(current.end) - Number(current.start))));
+        const x = marker.x + marker.width * fraction;
+        marker.line.setAttribute('x1', String(x)); marker.line.setAttribute('x2', String(x));
+      }
+      const follow = typeof hooks.follow === 'function' ? hooks.follow() : document.getElementById('follow')?.checked;
+      if (!current) return;
+      // Follow the canonical measure clock, including rests and tied tails. A
+      // paused seek and returning from PDF must relocate even on the same note.
+      // Prefer the staff that is actually sounding. Empty vocal staves can be
+      // much taller than the viewport during a piano interlude.
+      const targetNote = positioned.find(note => Number(note.measureIndex ?? note.measure) === number && elements.has(note.id)) || positioned.find(note => elements.has(note.id));
+      const noteElement = targetNote ? elements.get(targetNote.id) : null;
+      const element = noteElement?.querySelector('.notehead') || noteElement || marker?.anchor || measureElements.get(number);
+      if (!element) return;
+      const key = `${number}:${targetNote?.sourcePart || ''}:${targetNote?.staff || ''}`, rect = element.getBoundingClientRect(), viewport = stage.getBoundingClientRect();
+      const outside = rect.top < viewport.top + 25 || rect.top > viewport.bottom - 55;
+      const behavior = measureFollowAction({ view, playing, forceFollow: playbackOverride.forceFollow, follow, current, outside, key, previousKey: lastFollowed, jumped });
+      if (behavior) stage.scrollTo({ top: stage.scrollTop + rect.top - viewport.top - 65, behavior });
+      if (view === 'notation' && follow && (playing || playbackOverride.forceFollow)) lastFollowed = key;
     }
     setView('notation');
     await refresh(model);

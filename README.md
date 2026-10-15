@@ -6,10 +6,12 @@ This repository is a **local-execution Codex plugin and a standalone CLI**. It p
 
 ![Workbench generated from the original practice fixture](docs/workbench-example.png)
 
-**v0.3.1** adds an optional standalone library website and atomic incremental
-synchronization through an external deployment profile. Authoring, hosting and
-domain configuration stay independent. [Deployment workflow](docs/DEPLOYMENT.md)
-· [Release notes](docs/RELEASE-v0.3.1.md) ·
+**v0.4.0** adds optional per-score password access, a private feedback inbox,
+source-reviewed lyric overlays, measure numbering and timeline-based score
+following. Isolated hosts support incremental staging with an explicit final
+administrator activation step. Authoring, hosting, credentials and domain
+configuration stay independent. [Deployment workflow](docs/DEPLOYMENT.md)
+· [Release notes](docs/RELEASE-v0.4.0.md) ·
 [Reusable proofreading contract](docs/SOURCE_REVIEW.md).
 
 ## Install the plugin
@@ -71,12 +73,23 @@ choir-assistant library add --library /absolute/score-library \
 choir-assistant site sync --profile /absolute/private/site-profile.json
 ```
 
-The destination is configured once. Subsequent syncs verify the current library,
-transfer changed files, activate an immutable release, and check the public site;
-failed activation restores the previous release. `site export` works offline,
-and the exported site runs without the authoring plugin. No production domain,
+The destination is configured once. Subsequent syncs verify the current library
+and transfer changed files. A user-service destination activates an immutable
+release and restores the previous release on failed validation. A separately
+administered service-account destination stages a complete release and reports
+`pendingAdminActivation`; its administrator performs the final activation.
+`site export` works offline, and the exported site runs without the authoring plugin. No production domain,
 account, key or score is bundled. See [setup, profile, rollback and security
 boundaries](docs/DEPLOYMENT.md).
+
+Site branding, per-score password access and a private feedback inbox are optional
+runtime settings. Generate a private `site-config.json` with an interactive
+password prompt, then start the exported server with `--site-config`. For example,
+`--site-title "Example Choir Library" --github-url https://github.com/example/project`
+sets the visible title and project link. Homepage metadata stays public; protected
+scores and downloads require a separate session for each work. Configuration,
+credentials and feedback stay outside the export and repository. See the
+[private website settings](docs/DEPLOYMENT.md#private-website-settings-per-score-access-and-feedback).
 
 ## Accuracy and data
 

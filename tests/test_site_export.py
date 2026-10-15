@@ -120,6 +120,30 @@ class SiteExportTests(unittest.TestCase):
             self.exported()
         self.assertFalse((self.root / "site").exists())
 
+    def test_reviewed_lyrics_are_bound_to_revision_and_pdf_without_rewriting_bundle(self):
+        overlay = self.root / "lyrics.json"
+        value = {"schemaVersion": 1, "revision": "fixture-v1", "sourceSha256": catalog.digest(self.pdf),
+                 "measureLyrics": [{"measure": 1, "part": "S", "lines": ["Original public study"], "source": {"page": 1}}]}
+        catalog.write_json(overlay, value)
+        entry_path = self.library / "works/study/entry.json"
+        entry = catalog.read_json(entry_path)
+        entry["movements"][0]["notationOverlay"] = str(overlay)
+        catalog.write_json(entry_path, entry)
+        site, _ = self.exported()
+        movement = catalog.read_json(site / "release.json")["works"]["study"]["movements"]["main"]
+        self.assertEqual(catalog.read_json(site / movement["notationOverlay"]), value)
+        self.assertEqual(catalog.read_json(site / movement["projection"])["notationOverlay"], "/assets/notation-overlay.json")
+        self.assertFalse((self.bundle / "assets/notation-overlay.json").exists())
+        for key, invalid in (("revision", "other-version"), ("sourceSha256", "0" * 64)):
+            stale = dict(value, **{key: invalid})
+            catalog.write_json(overlay, stale)
+            with self.assertRaisesRegex(ValueError, "identity mismatch"):
+                self.exported("bad-" + key)
+        value["measureLyrics"][0]["measure"] = 2
+        catalog.write_json(overlay, value)
+        with self.assertRaisesRegex(ValueError, "invalid measure"):
+            self.exported("bad-bar")
+
     def test_legacy_hash_bound_entry_and_new_project_revision(self):
         # Old catalogs need no migration/rewrite. Their entry fixes a bundle,
         # original-PDF identity and optional preview pointer explicitly.

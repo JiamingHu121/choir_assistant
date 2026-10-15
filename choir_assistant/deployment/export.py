@@ -184,6 +184,60 @@ def download_url(work, movement, kind):
     return "/api/download?" + urlencode({"work": work, "movement": movement, "type": kind})
 
 
+def copy_notation_overlay(source, destination, model, source_hash, source_pages):
+    """Publish reviewed display annotations without rewriting accepted music.
+
+    A sidecar belongs to exactly one canonical revision and source PDF. Unknown
+    bars and duplicate part/bar entries are rejected rather than silently being
+    attached to the wrong score after a library update.
+    """
+    source = Path(source)
+    if not source.is_file() or source.is_symlink() or source.stat().st_size > 4 * 1024 * 1024:
+        raise ValueError("Notation overlay must be a regular JSON file under 4 MiB")
+    value = read_json(source)
+    if (value.get("schemaVersion") != 1 or value.get("revision") != model["revision"]
+            or value.get("sourceSha256") != source_hash):
+        raise ValueError("Notation overlay revision or original-PDF identity mismatch")
+    bars = {int(measure["index"]) for measure in model["measures"]}
+    rows = value.get("measureLyrics")
+    if not isinstance(rows, list) or len(rows) > len(bars) * 32:
+        raise ValueError("Invalid notation overlay lyric entries")
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("Invalid notation overlay lyric entry")
+        bar, part, lines = row.get("measure"), row.get("part"), row.get("lines")
+        if (isinstance(bar, bool) or not isinstance(bar, int) or bar not in bars
+                or not isinstance(part, str) or not 1 <= len(part) <= 80
+                or not isinstance(lines, list) or not 1 <= len(lines) <= 8
+                or any(not isinstance(line, str) or not 1 <= len(line) <= 2000 for line in lines)):
+            raise ValueError("Notation overlay has an invalid measure, part or lyric")
+        if (bar, part) in seen:
+            raise ValueError("Notation overlay has duplicate measure/part lyrics")
+        seen.add((bar, part))
+        evidence = row.get("source", {})
+        page = evidence.get("page")
+        if isinstance(page, bool) or not isinstance(page, int) or not 1 <= page <= source_pages:
+            raise ValueError("Notation overlay lyric lacks a valid original-PDF page")
+        image_hash = evidence.get("imageSha256")
+        if image_hash is not None and not re.fullmatch(r"[0-9a-f]{64}", image_hash):
+            raise ValueError("Notation overlay page hash is invalid")
+    # Strip private absolute paths from optional prose, while preserving the
+    # separately retained authoring sidecar as the source of truth.
+    def redact(item):
+        if isinstance(item, str):
+            return public_report_text(item)
+        if isinstance(item, list):
+            return [redact(child) for child in item]
+        if isinstance(item, dict):
+            return {key: redact(child) for key, child in item.items()}
+        return item
+    public = redact(value)
+    write_json(destination, public)
+    return {"sha256": digest(destination), "lyricRows": len(rows),
+            "measuresWithLyrics": len({row["measure"] for row in rows})}
+
+
 def public_report_text(text):
     """Redact local locations in prose while retaining external HTTPS sources."""
     # Reports are a separate public view, not the canonical review evidence.
@@ -286,13 +340,22 @@ def export_site(output, library_root, plugin_root=None, prepare_original=False):
                     evidence["works"][wid]["sourceSha256"] = source_hash
                 pages, alignment = copy_original(project, source_hash, staging / destination / "original", model,
                                                  pdf=pdf, prepare=prepare_original, preparation_root=preparation)
-                write_json(staging / destination / "score.json", score_projection(model, manifest, pages, alignment, source_hash))
+                projection = score_projection(model, manifest, pages, alignment, source_hash)
                 released_work["movements"][mid] = {
                     "id": mid, "title": source_movement.get("title", "全曲"), "revision": model["revision"],
                     "bundle": (destination / "bundle").as_posix(),
                     "projection": (destination / "score.json").as_posix(),
                     "original": (destination / "original").as_posix(),
                 }
+                overlay_path = source_movement.get("notationOverlay")
+                if overlay_path:
+                    overlay_relative = destination / "notation-overlay.json"
+                    overlay_check = copy_notation_overlay(source_path(overlay_path, library), staging / overlay_relative,
+                                                          model, source_hash, len(pages))
+                    released_work["movements"][mid]["notationOverlay"] = overlay_relative.as_posix()
+                    projection["notationOverlay"] = "/assets/notation-overlay.json"
+                    checks["notationOverlay"] = overlay_check
+                write_json(staging / destination / "score.json", projection)
                 movement = library_catalog.movement_summary(source_movement, manifest, model)
                 movement["reviewReport"] = download_url(wid, mid, "review") if report_path else None
                 work["movements"].append(movement)

@@ -132,9 +132,13 @@ def verify_health(health, expected):
     return health
 
 
-def fetch_health(url, expected, timeout=10):
-    request = urllib.request.Request(url.rstrip("/") + "/api/health", headers={"User-Agent": USER_AGENT,
-                                    "Cache-Control": "no-cache"})
+def fetch_health(url, expected, timeout=10, token=None, minimal=False):
+    headers = {"User-Agent": USER_AGENT, "Cache-Control": "no-cache"}
+    if token:
+        if not url.startswith("http://127.0.0.1:"):
+            raise ValueError("Internal health credentials must stay on loopback")
+        headers["Authorization"] = "Bearer " + token
+    request = urllib.request.Request(url.rstrip("/") + ("/api/health/internal" if token else "/api/health"), headers=headers)
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, request, fp, code, message, headers, new_url):
             return None
@@ -147,7 +151,12 @@ def fetch_health(url, expected, timeout=10):
         body = response.read(2 * 1024 * 1024 + 1)
         if len(body) > 2 * 1024 * 1024:
             raise ValueError("Health response is too large")
-        return verify_health(json.loads(body), expected)
+        value = json.loads(body)
+        if minimal:
+            if value.get("service") != SERVICE or value.get("readOnly") is not True or value.get("status") != "ok":
+                raise ValueError("Public site health failed")
+            return value
+        return verify_health(value, expected)
 
 
 def atomic_write(path, data, mode=0o600):
@@ -250,12 +259,26 @@ class LaunchdService:
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
 
     def health(self, expected, public=True):
+        # The secret belongs to the deployment, never the profile or release.
+        # Cloudflare also connects over loopback; the internal route requires
+        # this independent credential and rejects requests via that proxy.
+        token = None
+        arguments = self.owned()["agent"]["ProgramArguments"]
+        if "--site-config" in arguments:
+            config = Path(arguments[arguments.index("--site-config") + 1])
+            if not regular(config) or config.is_symlink() or config.stat().st_mode & 0o037:
+                raise ValueError("Unsafe private site configuration permissions")
+            value = json.loads(config.read_text(encoding="utf-8"))
+            if value.get("auth"):
+                token = value.get("internalHealthToken")
+                if not isinstance(token, str) or len(token) < 32:
+                    raise ValueError("Missing internal health credential")
         deadline = time.monotonic() + self.profile.get("healthTimeoutSeconds", 90)
         error = None
         while time.monotonic() < deadline:
             try:
                 local = fetch_health("http://127.0.0.1:" + str(self.profile["port"]), expected,
-                                     min(10, max(1, deadline - time.monotonic())))
+                                     min(10, max(1, deadline - time.monotonic())), token=token)
                 break
             except Exception as problem:
                 error = problem
@@ -263,7 +286,7 @@ class LaunchdService:
         else:
             raise RuntimeError("Local release health failed: " + str(error))
         if public:
-            fetch_health(self.profile["publicUrl"], expected, 20)
+            fetch_health(self.profile["publicUrl"], expected, 20, minimal=bool(token))
         return {"local": local, "public": "passed" if public else "not-requested"}
 
 
@@ -450,6 +473,16 @@ def main():
         raise ValueError("Oversized receiver request")
     request = json.loads(raw)
     action, profile = request["action"], request["profile"]
+    if profile.get("publisherMode") == "isolated-manual":
+        try:
+            from . import isolated
+        except ImportError:
+            import _choir_isolated_receiver as isolated
+        result = isolated.dispatch(profile, request, sys.stdin.buffer, sys.modules[__name__])
+        print(json.dumps({"ok": True, "result": result}, ensure_ascii=False))
+        return
+    if profile.get("publisherMode", "user-launchagent") != "user-launchagent":
+        raise ValueError("Unsupported publisher mode")
     archive = None
     try:
         if action == "inspect":

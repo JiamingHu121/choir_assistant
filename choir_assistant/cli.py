@@ -363,7 +363,10 @@ def parser():
     hosted.add_argument("--port", type=int, default=8780)
     hosted.add_argument("--fluidsynth")
     hosted.add_argument("--soundfont")
+    hosted.add_argument("--site-config", help="Private deployment configuration outside the exported site")
     hosted.add_argument("--origin", action="append", default=[])
+    security = site_commands.add_parser("security", help="Create private credentials or read the local feedback inbox")
+    security.add_argument("options", nargs=argparse.REMAINDER)
     for name in ("sync", "check", "rollback"):
         remote = site_commands.add_parser(name, help={"sync": "Export and atomically synchronize an independently configured website", "check": "Read-only verification of the configured website", "rollback": "Restore the previous website release"}[name])
         remote.add_argument("--profile", required=True, help="External deployment profile; never store credentials in the plugin")
@@ -388,12 +391,15 @@ def deployment_command(args):
         from choir_assistant.deployment.site_server import main as serve_site
         options = ["--root", str(external_path(args.root)), "--runtime", str(external_path(args.runtime)),
                    "--bind", args.bind, "--port", str(args.port)]
-        for flag in ("fluidsynth", "soundfont"):
+        for flag in ("fluidsynth", "soundfont", "site_config"):
             if getattr(args, flag):
-                options += ["--" + flag, getattr(args, flag)]
+                options += ["--" + flag.replace("_", "-"), getattr(args, flag)]
         for origin in args.origin:
             options += ["--origin", origin]
         return serve_site(options)
+    if args.site_command == "security":
+        from choir_assistant.deployment.security import main as security_main
+        return security_main(args.options)
     from choir_assistant.deployment.sync import sync_site, check_site, rollback_site
     profile = external_path(args.profile)
     if args.site_command == "sync":
