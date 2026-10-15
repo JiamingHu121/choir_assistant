@@ -6,10 +6,10 @@ This repository is a **local-execution Codex plugin and a standalone CLI**. It p
 
 ![Workbench generated from the original practice fixture](docs/workbench-example.png)
 
-**v0.3.0** adds an optional standalone library website and atomic incremental
+**v0.3.1** adds an optional standalone library website and atomic incremental
 synchronization through an external deployment profile. Authoring, hosting and
 domain configuration stay independent. [Deployment workflow](docs/DEPLOYMENT.md)
-· [Release notes](docs/RELEASE-v0.3.0.md) ·
+· [Release notes](docs/RELEASE-v0.3.1.md) ·
 [Reusable proofreading contract](docs/SOURCE_REVIEW.md).
 
 ## Install the plugin
@@ -27,7 +27,7 @@ The package includes a portable root manifest, a Codex compatibility manifest, a
 
 ## Standalone quick start · 命令行快速开始
 
-Install Python 3.12 or later, Audiveris and its Java runtime, FluidSynth, Poppler (`pdftoppm`), and a licensed General MIDI `.sf2` SoundFont. FFmpeg is optional for MP3. [Setup and dependency detection](SETUP.md) explain platform-specific installation and environment overrides.
+Install Python 3.12 or later, Audiveris and its Java runtime, FluidSynth, Poppler (`pdftoppm`), and a licensed General MIDI `.sf2` SoundFont. FFmpeg is required by the authoring build for audio fitting and MP3. The standalone website can serve and synthesize WAV without FFmpeg. [Setup and dependency detection](SETUP.md) explain platform-specific installation and environment overrides.
 
 ```sh
 git clone https://github.com/JiamingHu121/choir_assistant.git

@@ -1,0 +1,14 @@
+{
+  "version": "0.3.1",
+  "status": "local-passed",
+  "inherits": "release-validation-v0.3.0.json",
+  "productionCodeChanged": false,
+  "musicSemanticsChanged": false,
+  "websiteReleaseUnchanged": true,
+  "fixtureChange": "Isolate external audio-duration fitting in source-PDF identity fixtures whose PCM already has exact MIDI duration.",
+  "validation": {
+    "sourcePdfTestsWithoutFfmpegOnPath": 5,
+    "passed": true
+  },
+  "distribution": "A fresh versioned wheel is independently installed outside the source directory; its digest is attached to the GitHub release asset."
+}

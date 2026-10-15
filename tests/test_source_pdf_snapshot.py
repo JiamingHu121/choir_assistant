@@ -60,7 +60,10 @@ class SourcePdfSnapshotTests(unittest.TestCase):
     def build_bundle(self, config):
         bundle = self.root / "bundle"
         with patch("synth.render.midi_to_wav", side_effect=self.fake_audio), patch(
-                "synth.render.wav_to_mp3", side_effect=lambda source, output: Path(output).write_bytes(b"fixture")):
+                "synth.render.wav_to_mp3", side_effect=lambda source, output: Path(output).write_bytes(b"fixture")), patch(
+                "workbench.playback.fit_audio_duration"):
+            # fake_audio already writes exactly the MIDI duration. Source-PDF
+            # identity tests must not invoke a host's external audio encoder.
             manifest = build(config, bundle)
         return bundle, manifest
 

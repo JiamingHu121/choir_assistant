@@ -1,7 +1,8 @@
 # Install the runtime
 
 Choir Assistant requires Python **3.12 or later**, Audiveris, FluidSynth, a General
-MIDI SoundFont, and Poppler (`pdftoppm`). FFmpeg is optional for MP3 export.
+MIDI SoundFont, and Poppler (`pdftoppm`). FFmpeg is required for the authoring build's audio fitting and MP3 output.
+The independent website uses PCM WAV fitting and does not require FFmpeg.
 The plugin contains Python code and the browser workbench; it does not contain
 these applications, Java, SoundFonts, or a user's scores.
 
@@ -100,7 +101,7 @@ is **one executable path**, not a command with arguments.
 | `CHOIR_ASSISTANT_FLUIDSYNTH` | FluidSynth executable |
 | `CHOIR_ASSISTANT_SOUNDFONT` | General MIDI `.sf2`/`.sf3` file |
 | `CHOIR_ASSISTANT_PDFTOPPM` | Poppler PDF renderer executable |
-| `CHOIR_ASSISTANT_FFMPEG` | Optional FFmpeg executable |
+| `CHOIR_ASSISTANT_FFMPEG` | FFmpeg executable for authoring MP3 output |
 
 For a custom jar installation on macOS/Linux:
 
