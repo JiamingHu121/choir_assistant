@@ -8,5 +8,10 @@ build/
 dist/
 generated/
 runs/
+.deploy/
+site-data/
+site-runtime/
+site-profiles/
+*.site.local.json
 *.log
 .DS_Store

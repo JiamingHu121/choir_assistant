@@ -340,7 +340,67 @@ def parser():
     doctor.add_argument("--json", action="store_true")
     status = commands.add_parser("status")
     status.add_argument("--project", required=True)
+    library = commands.add_parser("library", help="Register completed projects in an external score library")
+    library_commands = library.add_subparsers(dest="library_command", required=True)
+    add = library_commands.add_parser("add", help="Register a project without changing its score or review status")
+    add.add_argument("--library", required=True)
+    add.add_argument("--project", required=True)
+    add.add_argument("--id", required=True)
+    add.add_argument("--movement", default="main")
+    add.add_argument("--title")
+    add.add_argument("--composer", default="")
+    add.add_argument("--overwrite", action="store_true")
+    site = commands.add_parser("site", help="Export, serve or synchronize a standalone score-library website")
+    site_commands = site.add_subparsers(dest="site_command", required=True)
+    export = site_commands.add_parser("export", help="Verify and freeze a website locally; no network operation")
+    export.add_argument("--library", required=True)
+    export.add_argument("--output", required=True)
+    export.add_argument("--prepare-original", action="store_true", help="Render missing original PDF page caches offline")
+    hosted = site_commands.add_parser("serve", help="Run an exported website without authoring or OMR services")
+    hosted.add_argument("--root", required=True)
+    hosted.add_argument("--runtime", required=True)
+    hosted.add_argument("--bind", default="127.0.0.1")
+    hosted.add_argument("--port", type=int, default=8780)
+    hosted.add_argument("--fluidsynth")
+    hosted.add_argument("--soundfont")
+    hosted.add_argument("--origin", action="append", default=[])
+    for name in ("sync", "check", "rollback"):
+        remote = site_commands.add_parser(name, help={"sync": "Export and atomically synchronize an independently configured website", "check": "Read-only verification of the configured website", "rollback": "Restore the previous website release"}[name])
+        remote.add_argument("--profile", required=True, help="External deployment profile; never store credentials in the plugin")
+        remote.add_argument("--ready", action="store_true", help="Acknowledge an already confirmed host readiness requirement")
+        if name == "sync":
+            remote.add_argument("--check-only", action="store_true", help="Plan and verify without remote writes or restart")
     return result
+
+
+def deployment_command(args):
+    """Load optional publishing code only when explicitly requested."""
+    if args.command == "library":
+        from choir_assistant.deployment.catalog import register_project
+        return register_project(external_path(args.library), external_path(args.project), args.id,
+                                movement_id=args.movement, title=args.title,
+                                composer=args.composer, overwrite=args.overwrite)
+    if args.site_command == "export":
+        from choir_assistant.deployment.export import export_site
+        return export_site(external_path(args.output), external_path(args.library),
+                           prepare_original=args.prepare_original)
+    if args.site_command == "serve":
+        from choir_assistant.deployment.site_server import main as serve_site
+        options = ["--root", str(external_path(args.root)), "--runtime", str(external_path(args.runtime)),
+                   "--bind", args.bind, "--port", str(args.port)]
+        for flag in ("fluidsynth", "soundfont"):
+            if getattr(args, flag):
+                options += ["--" + flag, getattr(args, flag)]
+        for origin in args.origin:
+            options += ["--origin", origin]
+        return serve_site(options)
+    from choir_assistant.deployment.sync import sync_site, check_site, rollback_site
+    profile = external_path(args.profile)
+    if args.site_command == "sync":
+        return sync_site(profile, check_only=args.check_only, ready=args.ready)
+    if args.site_command == "check":
+        return check_site(profile, ready=args.ready)
+    return rollback_site(profile, ready=args.ready)
 
 
 def main(argv=None):
@@ -358,6 +418,7 @@ def main(argv=None):
         elif args.command == "apply": result = apply_project(args)
         elif args.command == "rebuild": result = rebuild_project(args)
         elif args.command == "verify": result = verify_project(args)
+        elif args.command in ("library", "site"): result = deployment_command(args)
         else:
             project, state_path, generated, state, config = active_project(args.project)
             result = {**state, "activeCorrectionLedger": config.get("corrections")}

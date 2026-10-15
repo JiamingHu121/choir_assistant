@@ -1,7 +1,7 @@
 {
   "name": "choir-assistant",
-  "version": "0.2.0",
-  "description": "Turn a PDF choral score into an evidence-reviewed, synchronized rehearsal workbench.",
+  "version": "0.3.0",
+  "description": "Import and review PDF choral scores, then optionally publish independent rehearsal websites.",
   "author": {
     "name": "Jiaming Hu",
     "url": "https://github.com/JiamingHu121"

@@ -9,13 +9,15 @@ import tomllib
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SKIP = {".git", "__pycache__", ".venv", "venv", "env", "build", "dist", "generated", "runs"}
+SKIP = {".git", "__pycache__", ".venv", "venv", "env", "build", "dist", "generated", "runs",
+        ".deploy", "site-data", "site-runtime", "site-profiles"}
 
 
 def files():
     return sorted(path for path in ROOT.rglob("*") if path.is_file()
                   and not any(part in SKIP or part.endswith(".egg-info") for part in path.relative_to(ROOT).parts)
-                  and path.suffix not in {".pyc", ".log"} and path.name != ".DS_Store")
+                  and path.suffix not in {".pyc", ".log"} and path.name != ".DS_Store"
+                  and not path.name.endswith(".site.local.json"))
 
 
 def check():

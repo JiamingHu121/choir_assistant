@@ -1,0 +1,76 @@
+{
+  "version": "0.3.0",
+  "status": "passed",
+  "tests": {
+    "python": 169,
+    "javascript": 65,
+    "skillValidator": "passed",
+    "packageLayout": "passed"
+  },
+  "distribution": {
+    "wheelSha256": "b9279cfb80d1ad8fe1cf8810ef0569ed9f3ebd550c3c21bfe3d4963a9f7df7b3",
+    "sourceDirectoryImport": false,
+    "installedCli": "passed",
+    "staticResources": 19,
+    "pipCheck": "passed"
+  },
+  "publicFixture": {
+    "notes": 29,
+    "measures": 8,
+    "durationSeconds": 20.0,
+    "revision": "39500c86e30f9e69",
+    "scoreStatus": "unreviewed",
+    "notationCoverage": {
+      "notes": 29,
+      "rendered": 29,
+      "missing": []
+    },
+    "sourcePdfSha256": "715c88a886e12daf57f078619ffd6a27718e56eaeb03a3cbd6945d98a8eac96e",
+    "audio": {
+      "canonicalSeconds": 20.0,
+      "midiSeconds": 20.0,
+      "wavSeconds": 20.0,
+      "sampleRate": 44100,
+      "peak": 0.0557861328125,
+      "clippedSamples": 0
+    }
+  },
+  "deterministicExport": {
+    "fileManifestSha256": "5b4a4906698838b31072feb0856ccc1f0d716ea900a88e4c1506c01d33882fe6",
+    "deterministicFiles": 49,
+    "allHashesAndBytesVerified": true,
+    "sourcePageCount": 1,
+    "authoringOriginalCacheUnchanged": true
+  },
+  "standaloneReceiver": {
+    "packageProbe": {
+      "choir_assistant": false,
+      "workbench": false,
+      "omr": false,
+      "synth": false
+    },
+    "httpResourceCount": 26,
+    "loadedWorks": 1,
+    "synthesisAvailable": false
+  },
+  "privateDeployment": {
+    "works": 5,
+    "sourceRevisionsUnchanged": true,
+    "changedFiles": 18,
+    "reusedFiles": 213,
+    "transferBytes": 45107045,
+    "repeatChanged": false,
+    "repeatTransferBytes": 0,
+    "localHealth": "passed",
+    "publicHttpsHealth": "passed",
+    "browserSvgPages": 12,
+    "browserSelectionPlayback": "passed",
+    "gatewayMachineDependencyRemoved": true
+  },
+  "boundaries": [
+    "Original public MusicXML/PDF used; recognition was not rerun.",
+    "No real microphone/speaker or general OMR accuracy claim.",
+    "Private deployment data, paths, domain and credentials are not included.",
+    "macOS serving was also exercised on an existing Python 3.9 receiver; native audio tools remain external."
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "checks": {
+    "health": true,
+    "catalog": true,
+    "source_paths_redacted": true,
+    "all_interactive_pages": true,
+    "real_selection_audio": true,
+    "read_only": true,
+    "standalone_without_plugin": true
+  },
+  "notes": 29,
+  "interactiveSvgPages": 1,
+  "revision": "2c5703099a4ee51d",
+  "selectionNotes": 4,
+  "selectionDurationSeconds": 2.85,
+  "channels": 2,
+  "files": 50,
+  "fileManifestSha256": "b9419f8262b00c74c3a9dd76d6999705635f86dcecffc96af2e72b51d53c2798",
+  "renderer": "FluidSynth 2.6.1 with real SoundFont",
+  "recognition": "not rerun; public ground-truth MusicXML source used for this export acceptance",
+  "source": "repository original public practice study"
+}

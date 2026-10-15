@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "libraryRoot": "/absolute/score-library",
+  "outputRoot": "/absolute/site-releases",
+  "sshHost": "your-score-server",
+  "remoteRoot": "/absolute/remote/ChoirLibrary",
+  "remotePython": "/absolute/remote/ChoirLibrary/shared/venv/bin/python",
+  "launchdLabel": "org.example.choir-library",
+  "publicUrl": "https://choir.example.org/",
+  "bind": "127.0.0.1",
+  "port": 8780,
+  "requireReady": false,
+  "prepareOriginal": true,
+  "sshTimeoutSeconds": 20,
+  "healthTimeoutSeconds": 90
+}

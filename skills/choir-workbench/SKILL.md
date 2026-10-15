@@ -1,6 +1,6 @@
 ---
 name: choir-workbench
-description: Import a PDF choral score, calibrate its structured notes against the original pages, and generate or continue an interactive score/audio rehearsal workbench with metronome and pitch practice. Use for score-to-rehearsal requests; ordinary PDF reading or audio transcription does not need this skill.
+description: Import and source-review a PDF choral score, generate an interactive rehearsal workbench, or publish completed score projects to an independently configured library website. Use for score-to-rehearsal or choir-library synchronization requests; ordinary PDF reading or audio transcription does not need this skill.
 ---
 
 # Choir workbench
@@ -75,3 +75,24 @@ Open the returned loopback URL with the available browser tool. Verify all SVG p
 Pitch practice compares a selected part or single note with microphone/uploaded singing. The antiphonal mode plays other chosen parts as a background and uses interference-aware scoring. These are experimental: no physical microphone/speaker accuracy claim follows from fixture tests, and ambiguous unison/harmonic interference may be unscored. Do not request microphone capture unless the user's practice task requires it.
 
 Deliver the workbench URL, run/project path, source-review coverage, remaining issues, and validation actually performed. v0.2 still requires source review for false extra symbols, octave-direction scopes, mixed-meter relations, and repeat routes; see [known limits](../../docs/WORKFLOW.md#known-limits).
+
+## Optional library website
+
+When the user asks to publish a library or synchronize new scores, read
+[deployment](../../docs/DEPLOYMENT.md). Register the completed project with
+`library add --library ... --project ... --id ...`, then run
+`site sync --profile /absolute/private/site-profile.json` against the authorized
+destination. A sync exports and verifies the library, transfers changed files,
+activates only its owned service, verifies the public work/revision set, and
+restores the old deployment on activation failure. Review the receipt and actual
+public browser flow before claiming delivery. Use `--check-only` for a plan with
+no remote mutation. Honor a host's existing readiness rule; `--ready` records an
+already satisfied confirmation, not a new authorization.
+
+Keep the deployment profile, keys, site data and runtime outside the plugin.
+The website runs a frozen standalone serving package and never calls this skill
+or the author's import/calibration service. Domain and gateway setup are separate
+from sync; don't silently repoint DNS or reuse a personal research SSH account.
+Report which machines remain in the traffic/credential path when discussing
+isolation. A successful deploy does not establish full-score recognition or
+physical microphone accuracy.

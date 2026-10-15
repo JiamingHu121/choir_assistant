@@ -6,9 +6,10 @@ This repository is a **local-execution Codex plugin and a standalone CLI**. It p
 
 ![Workbench generated from the original practice fixture](docs/workbench-example.png)
 
-**v0.2.0** adds independent source-fact verification, frozen original PDFs,
-sequential MusicXML unit handling, exact octave-line checks, and resilient
-score/PDF switching. [Release notes](docs/RELEASE-v0.2.0.md) ·
+**v0.3.0** adds an optional standalone library website and atomic incremental
+synchronization through an external deployment profile. Authoring, hosting and
+domain configuration stay independent. [Deployment workflow](docs/DEPLOYMENT.md)
+· [Release notes](docs/RELEASE-v0.3.0.md) ·
 [Reusable proofreading contract](docs/SOURCE_REVIEW.md).
 
 ## Install the plugin
@@ -58,6 +59,24 @@ Use the printed workbench URL. The included eight-bar [Practice Study PDF](examp
 | `status --project project.json` | Show project progress, bundle, and open issues |
 
 The workbench has left/right panels and switchable selection, playback, beat, pitch, and review controls. Click or box-select notes to audition a passage. The original PDF remains available for comparison. The pitch panel shows target spectra, recorded/live pitch deviation, and an experimental mode for singing one part against other background parts.
+
+## Optional shared library website
+
+After reviewing a project, register it in a writable library and synchronize to
+an independently configured host:
+
+```sh
+choir-assistant library add --library /absolute/score-library \
+  --project /absolute/score-run/project.json --id new-score
+choir-assistant site sync --profile /absolute/private/site-profile.json
+```
+
+The destination is configured once. Subsequent syncs verify the current library,
+transfer changed files, activate an immutable release, and check the public site;
+failed activation restores the previous release. `site export` works offline,
+and the exported site runs without the authoring plugin. No production domain,
+account, key or score is bundled. See [setup, profile, rollback and security
+boundaries](docs/DEPLOYMENT.md).
 
 ## Accuracy and data
 

@@ -1,0 +1,11 @@
+{
+  "status": "passed",
+  "isolatedInterpreter": true,
+  "cwdOutsidePlugin": true,
+  "installedPluginImportRequired": false,
+  "loadedWorks": 1,
+  "notes": 29,
+  "selectionNotes": 4,
+  "audioDurationSeconds": 2.85,
+  "realFluidSynthNonSilent": true
+}
