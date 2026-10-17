@@ -75,6 +75,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
   window.initInteractive = async function initInteractive(data, hooks = {}) {
     const host = document.getElementById('interactive-host');
     if (!host) throw new Error('缺少互动谱容器');
+    host._disposeInteractivePointers?.();
     let model = data;
     let notes = new Map();
     const elements = new Map();
@@ -86,6 +87,10 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
     let busy = false;
     let drag = null;
     let touch = null;
+    let selectionMode = 'point';
+    let additiveSelection = false;
+    let multiTouch = false;
+    const touchPointers = new Set();
     let previewContext;
     let previewVoice;
     let lastFollowed = '';
@@ -106,7 +111,23 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
     tabs.append(notationTab, originalTab);
     const badge = node('span', 'notation-badge');
     toolbar.append(tabs, badge);
-    const hint = node('div', 'notation-guide', '单击音符快速试听 · 拖动框选 · Shift / ⌘ 加选 · 触屏可点选');
+    const interactionTools = node('div', 'notation-interaction-tools');
+    const selectionModes = node('div', 'notation-selection-modes');
+    selectionModes.setAttribute('role', 'group');
+    selectionModes.setAttribute('aria-label', '触屏选取方式');
+    const pointMode = node('button', 'notation-mode-button', '点选 / 滚动');
+    pointMode.setAttribute('aria-label', '点选与滚动');
+    const boxMode = node('button', 'notation-mode-button', '框选');
+    boxMode.setAttribute('aria-label', '触屏框选');
+    const additiveMode = node('button', 'notation-mode-button notation-additive-mode', '加选：关');
+    additiveMode.setAttribute('aria-label', '加选音符');
+    for (const button of [pointMode, boxMode, additiveMode]) button.type = 'button';
+    pointMode.title = '触屏点选一个音符，滑动滚动谱面';
+    boxMode.title = '触屏单指拖动框选；滚动前切回点选 / 滚动';
+    additiveMode.title = '开启后保留已有选区；点选已选音符可取消它';
+    selectionModes.append(pointMode, boxMode);
+    interactionTools.append(selectionModes, additiveMode);
+    const hint = node('div', 'notation-guide');
     const lyricsNow = node('div', 'notation-lyrics-current');
     lyricsNow.setAttribute('aria-label', '当前小节唱词');
     lyricsNow.hidden = true;
@@ -166,22 +187,25 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
     const auditHeading = node('summary');
     const auditBody = node('div', 'notation-audit-body');
     audit.append(auditHeading, auditBody);
-    host.append(toolbar, hint, lyricsNow, workspace, controls, editor, audit);
+    host.append(toolbar, interactionTools, hint, lyricsNow, workspace, controls, editor, audit);
 
     const setStatus = (text, error = false) => { status.textContent = text; status.classList.toggle('is-error', error); };
     const settings = () => typeof hooks.settings === 'function' ? hooks.settings() : {};
     const selectedNotes = () => [...selected].map(id => notes.get(id)).filter(Boolean).sort((a, b) => Number(a.start) - Number(b.start) || Number(a.pitch) - Number(b.pitch));
     const labelNote = note => `第 ${note.measure} 小节 · ${note.part || '声部'} · ${note.pitchName || midiName(note.pitch)} · ${note.duration} 四分时长单位`;
     function setBusy(value) {
+      if (value) cancelGesture();
       busy = value;
-      for (const button of [playSelected, fromHere, compare, clear, full, rangeButton, saveEdit]) button.disabled = value;
+      for (const button of [playSelected, fromHere, compare, clear, full, rangeButton, saveEdit, pointMode, boxMode, additiveMode]) button.disabled = value;
       if (!value) updateSelection();
     }
     function setView(nextView) {
+      if (nextView !== view) cancelGesture();
       view = nextView;
       const original = document.getElementById('original-view');
       workspace.hidden = view !== 'notation';
       hint.hidden = view !== 'notation';
+      interactionTools.hidden = view !== 'notation';
       if (original) original.hidden = view !== 'original';
       host.classList.toggle('show-original', view === 'original');
       notationTab.classList.toggle('is-current', view === 'notation');
@@ -358,18 +382,82 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
       else selected = new Set([note.id]);
       updateSelection(); preview(note);
     }
+    const isAdditive = event => additiveSelection || event.shiftKey || event.metaKey || event.ctrlKey;
+    function releaseCapture(pointerId) {
+      if (pointerId === undefined) return;
+      try { if (stage.hasPointerCapture(pointerId)) stage.releasePointerCapture(pointerId); }
+      catch (_) { /* A cancelled pointer may already have been released by the browser. */ }
+    }
+    function cancelGesture() {
+      const previousDrag = drag, previousTouch = touch;
+      drag = null; touch = null; dragBox.hidden = true;
+      releaseCapture(previousDrag?.pointerId ?? previousTouch?.pointerId);
+      if (previousDrag) { selected = new Set(previousDrag.initial); updateSelection(); }
+    }
+    function updateInteractionMode() {
+      stage.dataset.selectionMode = selectionMode;
+      stage.dataset.additive = String(additiveSelection);
+      stage.classList.toggle('is-box-selection', selectionMode === 'box');
+      pointMode.setAttribute('aria-pressed', String(selectionMode === 'point'));
+      boxMode.setAttribute('aria-pressed', String(selectionMode === 'box'));
+      additiveMode.setAttribute('aria-pressed', String(additiveSelection));
+      additiveMode.textContent = `加选：${additiveSelection ? '开' : '关'}`;
+      hint.textContent = selectionMode === 'box'
+        ? '触屏单指拖动框选；滚动请切回「点选 / 滚动」。电脑可直接拖动，Shift / ⌘ 加选。'
+        : '触屏点选替换选区，滑动滚动；先切到「框选」再拖动。电脑可直接拖动，Shift / ⌘ 加选。';
+      if (additiveSelection) hint.textContent += ' 当前加选已开启，已有选区会保留。';
+    }
+    for (const [button, mode] of [[pointMode, 'point'], [boxMode, 'box']]) button.addEventListener('click', () => {
+      if (busy) return;
+      cancelGesture(); selectionMode = mode; updateInteractionMode();
+    });
+    additiveMode.addEventListener('click', () => {
+      if (busy) return;
+      cancelGesture(); additiveSelection = !additiveSelection; updateInteractionMode();
+    });
+    updateInteractionMode();
+
+    // Track secondary fingers outside the stage too. A two-finger gesture must
+    // cancel its temporary box selection, never commit a partial selection.
+    const pointerListeners = new AbortController();
+    document.addEventListener('pointerdown', event => {
+      if (event.pointerType !== 'touch') return;
+      touchPointers.add(event.pointerId);
+      if (touchPointers.size > 1 || event.isPrimary === false) {
+        multiTouch = true;
+        cancelGesture();
+      }
+    }, { capture: true, signal: pointerListeners.signal });
+    const endTouch = event => {
+      if (event.pointerType !== 'touch') return;
+      touchPointers.delete(event.pointerId);
+      if (!touchPointers.size) multiTouch = false;
+    };
+    document.addEventListener('pointerup', endTouch, { capture: true, signal: pointerListeners.signal });
+    document.addEventListener('pointercancel', endTouch, { capture: true, signal: pointerListeners.signal });
+    window.addEventListener('blur', () => { cancelGesture(); touchPointers.clear(); multiTouch = false; }, { signal: pointerListeners.signal });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { cancelGesture(); touchPointers.clear(); multiTouch = false; }
+    }, { signal: pointerListeners.signal });
+    host._disposeInteractivePointers = () => { cancelGesture(); pointerListeners.abort(); };
+
     stage.addEventListener('pointerdown', event => {
-      if (busy || event.button !== 0 || !event.target.closest('svg')) return;
-      // Touch keeps native page scrolling; taps still select individual notes.
-      if (event.pointerType === 'touch') { touch = { x: event.clientX, y: event.clientY, id: event.pointerId, note: noteFromTarget(event.target), moved: false }; return; }
-      drag = { x: event.clientX, y: event.clientY, endX: event.clientX, endY: event.clientY, pointerId: event.pointerId, moving: false, additive: event.shiftKey || event.metaKey || event.ctrlKey, initial: new Set(selected), note: noteFromTarget(event.target) };
+      if (busy || view !== 'notation' || event.button !== 0 || !(event.target instanceof Element)) return;
+      if (event.target.closest('button, a, input, select, textarea, summary')) return;
+      if (event.pointerType === 'touch' && (multiTouch || event.isPrimary === false)) { cancelGesture(); return; }
+      if (drag || touch) { cancelGesture(); return; }
+      const gesture = { x: event.clientX, y: event.clientY, endX: event.clientX, endY: event.clientY, pointerId: event.pointerId, pointerType: event.pointerType, moving: false, additive: isAdditive(event), initial: new Set(selected), note: noteFromTarget(event.target) };
+      // Capture keeps tap-up observable even if the finger leaves the stage.
+      // In point mode touch-action still lets the browser take over scrolling.
       stage.setPointerCapture(event.pointerId);
+      if (event.pointerType === 'touch' && selectionMode === 'point') { touch = gesture; return; }
+      drag = gesture;
       event.preventDefault();
     });
     function paintDrag(event) {
       if (!drag || event.pointerId !== drag.pointerId) return;
       drag.endX = event.clientX; drag.endY = event.clientY;
-      if (!drag.moving && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
+      if (!drag.moving && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < (drag.pointerType === 'touch' ? 8 : 6)) return;
       drag.moving = true;
       const left = Math.min(drag.x, event.clientX), right = Math.max(drag.x, event.clientX), top = Math.min(drag.y, event.clientY), bottom = Math.max(drag.y, event.clientY);
       const bounds = stage.getBoundingClientRect();
@@ -385,22 +473,40 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
       highlightSelection();
     }
     stage.addEventListener('pointermove', event => {
-      if (touch && event.pointerId === touch.id && Math.hypot(event.clientX - touch.x, event.clientY - touch.y) > 8) touch.moved = true;
+      if (touch && event.pointerId === touch.pointerId && Math.hypot(event.clientX - touch.x, event.clientY - touch.y) > 8) touch.moving = true;
+      if (drag && event.pointerId === drag.pointerId) event.preventDefault();
       paintDrag(event);
     });
     stage.addEventListener('pointerup', event => {
-      if (event.pointerType === 'touch') { if (touch && touch.id === event.pointerId && !touch.moved && touch.note && !busy) activate(touch.note, true); touch = null; return; }
+      if (touch && event.pointerId === touch.pointerId) {
+        const finished = touch; touch = null; releaseCapture(event.pointerId);
+        const moved = finished.moving || Math.hypot(event.clientX - finished.x, event.clientY - finished.y) > 8;
+        if (!moved && !busy && !multiTouch) {
+          if (finished.note) activate(finished.note, finished.additive);
+          else if (!finished.additive) { selected.clear(); updateSelection(); }
+        }
+        return;
+      }
       if (!drag || event.pointerId !== drag.pointerId) return;
+      if (busy || multiTouch) { cancelGesture(); return; }
+      paintDrag(event);
       const finished = drag; drag = null; dragBox.hidden = true;
-      if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
+      releaseCapture(event.pointerId);
       if (finished.moving) { updateSelection(); setStatus(selected.size ? `已框选 ${selected.size} 个音符。点击「合成并播放所选」试听。` : '框内没有音符，请将框覆盖到音符头。'); }
       else if (finished.note) activate(finished.note, finished.additive);
       else if (!finished.additive) { selected.clear(); updateSelection(); }
     });
-    stage.addEventListener('pointercancel', () => { if (drag) selected = new Set(drag.initial); drag = null; touch = null; dragBox.hidden = true; updateSelection(); });
+    stage.addEventListener('pointercancel', event => {
+      if (event.pointerId === drag?.pointerId || event.pointerId === touch?.pointerId) cancelGesture();
+    });
+    stage.addEventListener('lostpointercapture', event => {
+      if (event.pointerId === drag?.pointerId || event.pointerId === touch?.pointerId) cancelGesture();
+    });
+    stage.addEventListener('contextmenu', event => { if (drag || touch) event.preventDefault(); });
     stage.addEventListener('keydown', event => {
-      if (event.key === 'Escape') { selected.clear(); updateSelection(); event.preventDefault(); }
-      if (event.key === 'Enter' || event.key === ' ') { const note = noteFromTarget(event.target); if (note) { event.preventDefault(); event.stopPropagation(); activate(note, event.shiftKey || event.metaKey || event.ctrlKey); } }
+      if (event.key === 'Escape') { cancelGesture(); selected.clear(); updateSelection(); event.preventDefault(); return; }
+      if (busy || drag || touch) return;
+      if (event.key === 'Enter' || event.key === ' ') { const note = noteFromTarget(event.target); if (note) { event.preventDefault(); event.stopPropagation(); activate(note, isAdditive(event)); } }
     });
 
     function buildAudit() {
@@ -507,6 +613,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
     }
 
     async function refresh(nextModel = model) {
+      cancelGesture();
       model = nextModel;
       notes = new Map((model.notes || []).filter(note => note.pitch !== null && note.pitch !== undefined).map(note => [note.id, note]));
       selected = new Set([...selected].filter(id => notes.has(id)));
@@ -618,7 +725,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
         marker.line.setAttribute('x1', String(x)); marker.line.setAttribute('x2', String(x));
       }
       const follow = typeof hooks.follow === 'function' ? hooks.follow() : document.getElementById('follow')?.checked;
-      if (!current) return;
+      if (!current || drag || touch) return;
       // Follow the canonical measure clock, including rests and tied tails. A
       // paused seek and returning from PDF must relocate even on the same note.
       // Prefer the staff that is actually sounding. Empty vocal staves can be

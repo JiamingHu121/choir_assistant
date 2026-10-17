@@ -91,6 +91,12 @@ scores and downloads require a separate session for each work. Configuration,
 credentials and feedback stay outside the export and repository. See the
 [private website settings](docs/DEPLOYMENT.md#private-website-settings-per-score-access-and-feedback).
 
+On a touchscreen, **Tap / scroll** selects one note and leaves swiping available
+for scrolling. Choose **Box select** before dragging a selection rectangle;
+switch back to scroll. **Add selection** is an explicit toggle and starts off.
+Mouse dragging and Shift/Command/Ctrl selection remain available on desktop.
+See the optional [native touch browser regression](tests/browser/README.md).
+
 ## Accuracy and data
 
 Every note retains its pitch, rational duration, written notation, staff/voice, chord position, and connection relationships. Meter/lane completeness, cross-part timing, and notation contradictions identify review candidates. A beat-fitting solution is not enough evidence to change music. Accepted edits bind source hashes, old values, original image evidence, and a frozen revision; SVG, MIDI, audio, and pitch targets are rebuilt together.
