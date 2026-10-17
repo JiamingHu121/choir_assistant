@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "publisherMode": "isolated-auto",
+  "libraryRoot": "/absolute/private/score-library",
+  "outputRoot": "/absolute/private/site-releases",
+  "sshHost": "example-score-server",
+  "remoteRoot": "/Library/Application Support/ExampleChoirSite",
+  "remotePython": "/usr/bin/python3",
+  "publicUrl": "https://scores.example.org",
+  "bind": "127.0.0.1",
+  "port": 8782,
+  "requireReady": true,
+  "prepareOriginal": false,
+  "sshTimeoutSeconds": 20,
+  "healthTimeoutSeconds": 90,
+  "transferTimeoutSeconds": 1800
+}

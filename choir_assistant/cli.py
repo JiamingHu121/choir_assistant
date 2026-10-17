@@ -373,6 +373,7 @@ def parser():
         remote.add_argument("--ready", action="store_true", help="Acknowledge an already confirmed host readiness requirement")
         if name == "sync":
             remote.add_argument("--check-only", action="store_true", help="Plan and verify without remote writes or restart")
+            remote.add_argument("--retry-failed", action="store_true", help="Explicitly replace a terminal failed isolated-auto request")
     return result
 
 
@@ -403,7 +404,7 @@ def deployment_command(args):
     from choir_assistant.deployment.sync import sync_site, check_site, rollback_site
     profile = external_path(args.profile)
     if args.site_command == "sync":
-        return sync_site(profile, check_only=args.check_only, ready=args.ready)
+        return sync_site(profile, check_only=args.check_only, ready=args.ready, retry_failed=args.retry_failed)
     if args.site_command == "check":
         return check_site(profile, ready=args.ready)
     return rollback_site(profile, ready=args.ready)
@@ -429,6 +430,8 @@ def main(argv=None):
             project, state_path, generated, state, config = active_project(args.project)
             result = {**state, "activeCorrectionLedger": config.get("corrections")}
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.command == "site" and args.site_command == "sync" and result.get("publicationFailed") is True:
+            return 2
         return 1 if args.command == "verify" and not result["passed"] else 0
     except Exception as error:
         print(json.dumps({"status": "failed", "error": str(error)}, ensure_ascii=False), file=sys.stderr)

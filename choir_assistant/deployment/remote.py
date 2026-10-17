@@ -473,7 +473,7 @@ def main():
         raise ValueError("Oversized receiver request")
     request = json.loads(raw)
     action, profile = request["action"], request["profile"]
-    if profile.get("publisherMode") == "isolated-manual":
+    if profile.get("publisherMode") in ("isolated-manual", "isolated-auto"):
         try:
             from . import isolated
         except ImportError:

@@ -78,6 +78,10 @@ and transfer changed files. A user-service destination activates an immutable
 release and restores the previous release on failed validation. A separately
 administered service-account destination stages a complete release and reports
 `pendingAdminActivation`; its administrator performs the final activation.
+If that administrator separately installs a reviewed data-only publisher once,
+`publisherMode: "isolated-auto"` can handle routine updates without another
+password prompt. The plugin stages a generation-bound request and reports real
+publisher success or failure; a pending upload is not an activated release.
 `site export` works offline, and the exported site runs without the authoring plugin. No production domain,
 account, key or score is bundled. See [setup, profile, rollback and security
 boundaries](docs/DEPLOYMENT.md).

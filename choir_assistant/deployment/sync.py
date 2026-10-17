@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 import uuid
 from urllib.parse import urlsplit
 
@@ -46,7 +47,7 @@ def load_profile(path):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}", value.get("sshHost", "")):
         raise ValueError("sshHost must be an existing SSH alias, without options or user syntax")
     mode = value.get("publisherMode", "user-launchagent")
-    if mode not in ("user-launchagent", "isolated-manual"):
+    if mode not in ("user-launchagent", "isolated-manual", "isolated-auto"):
         raise ValueError("Unsupported publisherMode")
     value["publisherMode"] = mode
     if mode == "isolated-manual":
@@ -56,7 +57,7 @@ def load_profile(path):
             Path(value["isolatedPublishHelper"]).relative_to(value["remoteRoot"])
         except ValueError:
             raise ValueError("isolatedPublishHelper must belong to remoteRoot") from None
-    elif not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}", value.get("launchdLabel", "")):
+    elif mode == "user-launchagent" and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}", value.get("launchdLabel", "")):
         raise ValueError("Invalid dedicated launchdLabel")
     if value.get("bind", "127.0.0.1") != "127.0.0.1":
         raise ValueError("The publishing profile must keep the backend on loopback")
@@ -90,15 +91,19 @@ def _ready(profile, ready):
 
 def _remote_profile(profile):
     keys = ["remoteRoot", "remotePython", "publicUrl", "bind", "port", "healthTimeoutSeconds", "publisherMode"]
-    keys += ["isolatedPublishHelper", "isolatedAdminPython"] if profile.get("publisherMode") == "isolated-manual" else ["launchdLabel"]
+    mode = profile.get("publisherMode")
+    if mode == "isolated-manual":
+        keys += ["isolatedPublishHelper", "isolatedAdminPython"]
+    elif mode != "isolated-auto":
+        keys += ["launchdLabel"]
     return {key: profile[key] for key in keys if key in profile}
 
 
-def _call(profile, action, payload=None, archive=None):
+def _call(profile, action, payload=None, archive=None, timeout=None):
     """Run only the bundled receiver; request data travels on stdin, never shell interpolation."""
     source = Path(remote.__file__).read_bytes()
     program = "import base64;"
-    if profile.get("publisherMode") == "isolated-manual":
+    if profile.get("publisherMode") in ("isolated-manual", "isolated-auto"):
         from . import isolated
         isolated_source = base64.b64encode(Path(isolated.__file__).read_bytes()).decode("ascii")
         program += ("import types,sys;_receiver=types.ModuleType('_choir_isolated_receiver');"
@@ -120,7 +125,7 @@ def _call(profile, action, payload=None, archive=None):
                 shutil.copyfileobj(source_stream, stream, 1024 * 1024)
         stream.seek(0)
         completed = subprocess.run(command, stdin=stream, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   timeout=profile["transferTimeoutSeconds"])
+                                   timeout=profile["transferTimeoutSeconds"] if timeout is None else timeout)
     lines = completed.stdout.decode("utf-8", "replace").strip().splitlines()
     try:
         response = json.loads(lines[-1]) if lines else {}
@@ -167,10 +172,13 @@ def _plan(release, entries, expected, state):
     target = remote.file_entries(entries)
     changed = sorted(name for name, entry in target.items() if source.get(name) != entry)
     removed = sorted(set(source) - set(target))
-    return {"releaseId": release.name, "baseRelease": state["release"], "files": list(target.values()),
+    result = {"releaseId": release.name, "baseRelease": state["release"], "files": list(target.values()),
             "revisions": expected, "changed": changed, "removed": removed,
             "transferBytes": sum(target[name]["bytes"] for name in changed),
             "changedFiles": len(changed), "reusedFiles": len(target) - len(changed)}
+    if state.get("publisherMode") == "isolated-auto":
+        result["expectedGeneration"] = state["publisher"]["generation"]
+    return result
 
 
 def _archive(release, changed, destination):
@@ -189,21 +197,43 @@ def _archive(release, changed, destination):
                 stream.addfile(info, content)
 
 
-def sync_site(profile_path, check_only=False, ready=False, prepare_original=None):
+def sync_site(profile_path, check_only=False, ready=False, prepare_original=None, retry_failed=False):
     profile = load_profile(profile_path)
     _ready(profile, ready)
+    if retry_failed and profile["publisherMode"] != "isolated-auto":
+        raise ValueError("--retry-failed requires an isolated-auto publisher")
     release, entries, expected, exported = _export(profile, prepare_original)
     state = _call(profile, "inspect")
     plan = _plan(release, entries, expected, state)
     summary = {key: value for key, value in plan.items() if key not in ("files", "changed")}
     summary.update({"localRelease": str(release), "checkOnly": bool(check_only)})
+    if profile["publisherMode"] == "isolated-auto":
+        summary.update(publisherMode="isolated-auto", publisherStatus=state["publisherStatus"],
+                       pendingRequest=state["pendingRequest"])
     if check_only:
         return summary
+    pending = None
+    if profile["publisherMode"] == "isolated-auto":
+        plan["retryFailed"] = bool(retry_failed)
+        pending = _existing_auto_request(state, release.name, remote.digest(release / "file-manifest.json"), retry_failed)
+        if pending is not None:
+            result = dict(summary, publisherMode="isolated-auto", requestId=pending["requestId"],
+                          manifestSha256=pending["manifestSha256"], pendingActivation=True,
+                          requestSha256=state["pendingRequestSha256"],
+                          activated=False, changed=True, reusedPendingRequest=True)
+            return _wait_for_publisher(profile, result, expected)
     if not plan["changed"] and not plan["removed"]:
-        result = _call(profile, "check", {"baseRelease": state["release"], "revisions": expected})
+        guard = {"baseRelease": state["release"], "revisions": expected}
+        if profile["publisherMode"] == "isolated-auto":
+            guard["expectedGeneration"] = state["publisher"]["generation"]
+        result = _call(profile, "check", guard)
         if result.get("release") != state["release"] or result.get("revisions") != expected:
             raise RuntimeError("Active release changed during the no-op sync; retry")
-        return dict(summary, changed=False, health=result["health"])
+        summary.update(changed=False, health=result["health"])
+        if profile["publisherMode"] == "isolated-auto":
+            summary["publisherStatus"] = result.get("publisherStatus", state["publisherStatus"])
+            summary["pendingRequest"] = result.get("pendingRequest", state["pendingRequest"])
+        return summary
     # Export and receiver both validate the exact immutable file set.  This
     # second check closes the gap between a local plan and tar creation.
     remote.verify_release(release, entries)
@@ -214,7 +244,65 @@ def sync_site(profile_path, check_only=False, ready=False, prepare_original=None
         plan["archiveSha256"] = remote.digest(archive)
         result = _call(profile, "sync", plan, archive)
     result["localRelease"] = str(release)
+    if profile["publisherMode"] == "isolated-auto":
+        return _wait_for_publisher(profile, result, expected)
     return result
+
+
+def _existing_auto_request(state, target, manifest_hash, retry_failed):
+    from .isolated import terminal_receipt
+    pending = state.get("pendingRequest")
+    if pending is None:
+        return None
+    status = state["publisherStatus"]
+    recorded = terminal_receipt(status, pending, state["pendingRequestSha256"])
+    if recorded is None:
+        if pending["releaseId"] != target or pending["manifestSha256"] != manifest_hash:
+            raise RuntimeError("Another unresolved publisher request exists; inspect its status before replacing it")
+        return pending
+    if recorded["status"] in ("failed", "blocked") and not retry_failed:
+        raise RuntimeError("Publisher request " + pending["requestId"] + " ended " + recorded["status"] +
+                           " (" + str(recorded["errorCode"]) + "); inspect it and use --retry-failed explicitly")
+    return None
+
+
+def _wait_for_publisher(profile, result, expected):
+    """Poll data-only receipts; never delegate service control or sudo to SSH."""
+    from .isolated import terminal_receipt
+    deadline = time.monotonic() + min(profile["healthTimeoutSeconds"], 90)
+    request_id = result["requestId"]
+    while True:
+        try:
+            snapshot = _call(profile, "status", timeout=max(0.1, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            return dict(result, pendingActivation=True, activated=False, pollTimedOut=True)
+        status = snapshot["publisherStatus"]
+        result.update(publisherStatus=status, pendingActivation=True, activated=False)
+        if (status["requestId"] == request_id and status["status"] in ("failed", "blocked")
+                and not any(row["requestId"] == request_id for row in status["recent"])):
+            # Capacity/recovery failures may be unable to create a terminal
+            # receipt. Report the root-owned error, but never allow that missing
+            # receipt to authorize replacing the unresolved request.
+            return dict(result, pendingActivation=False, publicationFailed=True,
+                        errorCode=status["errorCode"], terminalReceiptMissing=True)
+        recorded = terminal_receipt(status, {"requestId": request_id, "releaseId": result["releaseId"]}, result["requestSha256"])
+        if recorded is not None:
+            result["requestReceipt"] = recorded
+            if recorded["status"] in ("failed", "blocked"):
+                result.update(pendingActivation=False, publicationFailed=True, errorCode=recorded["errorCode"])
+                return result
+            if recorded["status"] == "succeeded":
+                if (status["currentRelease"] != result["releaseId"] or
+                        status["manifestSha256"] != result["manifestSha256"]):
+                    raise RuntimeError("Publisher success receipt describes another target")
+                checked = _call(profile, "check", {"baseRelease": str(Path(profile["remoteRoot"]) / "releases" / result["releaseId"]),
+                                                     "revisions": expected, "expectedGeneration": status["generation"]})
+                result.update(pendingActivation=False, activated=True, changed=recorded["changed"],
+                              release=checked["release"], health=checked["health"])
+                return result
+        if time.monotonic() >= deadline:
+            return dict(result, pollTimedOut=True)
+        time.sleep(min(2, max(0, deadline - time.monotonic())))
 
 
 def check_site(profile_path, ready=False):

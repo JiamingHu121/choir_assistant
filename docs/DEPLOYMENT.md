@@ -245,6 +245,100 @@ rollback may restore original service accounts and is not a score-release rollba
 Do not substitute it. A destination needs its own reviewed release rollback
 procedure before offering that operation.
 
+## Routine updates through an independently installed publisher
+
+`publisherMode: "isolated-auto"` uses the same frozen export, exact file set,
+changed-file tar transfer and private incoming directory. It requires a publisher
+that the server administrator has separately installed and reviewed once. Copy
+the [automatic profile example](../examples/site-profile.auto.example.json)
+outside the plugin. The profile names no privileged helper, administrator Python,
+service label, domain account or credential. This plugin contains the unprivileged
+client protocol only; it does not install or invoke the privileged publisher.
+
+The separately installed publisher owns `public-state.json` and
+`publisher-status.json`. Both are bounded regular root-owned files and must not
+be writable by the web, tunnel or SSH deployment accounts. Automatic public
+state retains the manual schema above, changes `publisherMode` to
+`"isolated-auto"`, and adds exactly:
+
+```json
+"publisher": {"schemaVersion": 1, "generation": 0}
+```
+
+`generation` is a nonnegative integer used with the current release for
+compare-and-swap checks. The client verifies the full current immutable release
+before planning and staging. `incoming/request.json` has exactly these fields:
+
+```json
+{
+  "schemaVersion": 2,
+  "requestId": "<32-lowercase-hex-characters>",
+  "releaseId": "release-<first-20-manifest-hash-characters>",
+  "manifestSha256": "<complete-64-character-sha256>",
+  "expectedCurrentRelease": "release-<current-id>",
+  "expectedGeneration": 0
+}
+```
+
+The request selects only a frozen release under `incoming/releases/`. It cannot
+choose a command, executable, account, destination, service or secret config.
+The server publisher must copy into its own private snapshot, bound every file,
+reject links and unexpected files, recheck the pinned full manifest, preflight
+as the service account, and activate only its independently fixed web service.
+Runtime code supplied in a release may run only as that service account. A
+publisher must hold its own root-owned lock, respect an existing
+`incoming/.site-sync.lock` during consumption, and check the generation/current
+release again before activation. The client never runs `sudo`, changes a
+LaunchDaemon or accesses service secrets.
+
+`publisher-status.json` schema 1 contains exactly `schemaVersion`,
+`publisherMode`, `status`, `generation`, `currentRelease`, `manifestSha256`,
+`changed`, `requestId`, `releaseId`, `previousRelease`, `errorCode`, and `recent`.
+The manifest hash always describes the actual committed `currentRelease`,
+including after a failed candidate. `status` is `idle`, `queued`, `publishing`,
+`succeeded`, `failed` or `blocked`. Request identity fields are null before any
+request. `errorCode` is null except for failures, and is one of:
+
+- `invalid-request`, `stale-generation`, `validation-failed`, `preflight-failed`
+- `publication-failed-restored`, `recovery-required`, `request-id-collision`
+- `capacity-exceeded`, `internal-error`
+
+`recent` is a bounded list of at most 32 terminal receipts, each containing
+exactly `requestId`, `requestSha256`, `status`, `releaseId`, `generation`,
+`changed` and nullable `errorCode`. `requestSha256` binds the original request
+bytes, including whitespace and newline. Keep the latest terminal request in
+this list. Detailed private logs and receipts stay outside this public file.
+The initial idle receipt has no request, no error, `changed: false` and an empty
+recent list.
+
+The normal command remains:
+
+```sh
+choir-assistant site sync --profile /absolute/private/site-profile.json --ready
+```
+
+It serializes staging, refuses to overwrite a different unresolved request and
+reuses an identical pending target's request ID. An unchanged active target
+performs read-only verification with no transfer. After staging, it polls the
+data-only status in short SSH calls for at most 90 seconds. Only a matching
+successful receipt followed by a fresh current-manifest/public-health check
+returns `activated: true`. If still running it returns `pendingActivation: true`;
+this is a pending operation, not a deployment success. Inspect it using `site
+check` or repeat the same sync to continue observing the existing request.
+
+A terminal `failed` or `blocked` request is not retried automatically. The CLI
+returns a nonzero exit code and the fixed public error code. After investigating
+the private logs, an operator may explicitly request a new attempt:
+
+```sh
+choir-assistant site sync --profile /absolute/private/site-profile.json --ready --retry-failed
+```
+
+That creates a new request ID; it does not restart or mutate the failed receipt.
+Legacy schema-1 pending requests require a separately reviewed administrator
+migration; automatic mode never silently rewrites them. `site rollback` remains
+unsupported in isolated modes and cannot invoke an account-migration rollback.
+
 ## Network and account boundary
 
 The hosted application provides score viewing and bounded selection synthesis.
