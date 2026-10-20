@@ -374,3 +374,25 @@ management certificate off the web server. Check the new connector's readiness,
 switch only the intended hostname, verify external playback, and then stop and
 revoke the old reverse SSH route/key. Preserve a DNS rollback target until the
 new route has passed external acceptance. See [Cloudflare tunnel permissions](https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/tunnel-permissions/).
+
+## Loading performance
+
+The workbench downloads its dependencies concurrently while preserving execution
+order. The first notation page becomes interactive before later pages finish;
+at most two later SVGs transfer concurrently. Original-PDF images start loading
+when that view is opened. Pages received while hidden bind their click areas and
+measure geometry when the notation view becomes visible again.
+
+The standalone server supports negotiated gzip for immutable model, score, SVG,
+and interface responses. A bounded, process-local representation cache avoids
+repeated projection and compression. Each protected request still checks its
+work cookie before reading that cache, and HTTP `no-store` remains in force.
+CSRF, login, feedback, and other dynamic API responses are not opted into server
+compression. Range requests retain identity bytes; gzip HEAD responses describe
+the matching GET representation without sending its body.
+
+Measure both origin and public transfer: a CDN may already compress the final
+download while the server still uploads the full model to the CDN. Validate
+first-page interaction, a slow or missing later page, PDF/notation round trips
+during loading, and playback positioning on the final page. Keep score revisions
+and audio hashes separate from interface and transport performance checks.

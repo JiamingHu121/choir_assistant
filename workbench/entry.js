@@ -14,18 +14,24 @@
     };
     return;
   }
-  const scripts = ['pitch_core.js', 'pitch.js', 'interactive.js', 'console.js', 'metronome.js', 'calibration_ui.js', 'app.js'];
-  function load(index) {
-    if (index >= scripts.length) return;
+  const scripts = ['pitch_core.js', 'pitch.js', 'interactive.js', 'console.js', 'metronome.js', 'calibration_ui.js'];
+  let remaining = scripts.length, failed = false;
+  function load(name, onload) {
     const script = document.createElement('script');
-    script.src = scripts[index];
-    script.onload = () => load(index + 1);
+    // Download dependencies together, while preserving their execution order.
+    script.async = false;
+    script.src = name;
+    script.onload = onload;
     script.onerror = () => {
+      failed = true;
       const error = document.getElementById('entry-error');
       error.hidden = false;
-      error.textContent = '工作台资源加载失败（' + scripts[index] + '）。请用 start.command 启动并刷新此页面。';
+      error.textContent = '工作台资源加载失败（' + name + '）。请刷新页面重试；本地使用时请确认 start.command 服务正在运行。';
     };
     document.body.append(script);
   }
-  load(0);
+  for (const name of scripts) load(name, () => {
+    remaining -= 1;
+    if (!remaining && !failed) load('app.js', () => {});
+  });
 })();

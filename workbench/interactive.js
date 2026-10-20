@@ -14,6 +14,24 @@ async function loadNotationAssets(pages, revision, fetchAsset = fetch, timeoutMs
     }
   }));
 }
+function loadNotationProgressively(pages, revision, onAsset, options = {}) {
+  const isCurrent = options.isCurrent || (() => true);
+  const load = async page => {
+    if (!isCurrent()) return;
+    const [asset] = await loadNotationAssets([page], revision, options.fetchAsset, options.timeoutMs);
+    if (isCurrent()) await onAsset(asset);
+  };
+  // The first playable page must not wait for an unrelated slow or broken page.
+  const firstPage = pages.length ? load(pages[0]) : Promise.resolve();
+  let next = 1;
+  const done = firstPage.then(async () => {
+    const worker = async () => {
+      while (isCurrent() && next < pages.length) await load(pages[next++]);
+    };
+    await Promise.all(Array.from({ length: Math.min(2, pages.length - 1) }, worker));
+  });
+  return { firstPage, done };
+}
 function measureAtTime(measures, time) {
   if (!Number.isFinite(Number(time))) return null;
   const position = Number(time);
@@ -55,7 +73,45 @@ async function loadNotationOverlay(url, model, fetchAsset = fetch, timeoutMs = 1
     return { error: error.name === 'AbortError' ? '唱词加载超时，可重新加载' : error.message || String(error) };
   } finally { clearTimeout(timer); }
 }
-if (typeof module !== 'undefined' && module.exports) module.exports = { loadNotationAssets, loadNotationOverlay, measureAtTime, mappedMeasure, validateNotationOverlay, measureFollowAction };
+function bindNotationPageGeometry(wrapper, measureMarkers, svgNode = (name, attributes) => {
+  const element = document.createElementNS('http://www.w3.org/2000/svg', name);
+  for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
+  return element;
+}) {
+  let complete = true;
+  for (const measure of wrapper.querySelectorAll('g.measure[data-measure-index]')) {
+    const staffs = [...measure.querySelectorAll(':scope > g.staff:not(.bounding-box)')];
+    const first = staffs[0], last = staffs[staffs.length - 1];
+    const firstLines = first ? [...first.children].filter(element => element.localName === 'path') : [];
+    const lastLines = last ? [...last.children].filter(element => element.localName === 'path') : [];
+    if (!firstLines.length || !lastLines.length) continue;
+    let start, bottom;
+    try { start = firstLines[0].getBBox(); bottom = lastLines[lastLines.length - 1].getBBox(); }
+    catch (_) { complete = false; continue; }
+    // Hidden SVGs can report all-zero boxes. Never commit those as real geometry.
+    if (!(start.width > 0)) { complete = false; continue; }
+    const { x, y, width } = start, height = Math.max(1, bottom.y - y);
+    for (const existing of measure.querySelectorAll(':scope > .mNum, :scope > .notation-measure-number, :scope > .notation-measure-highlight, :scope > .notation-measure-playhead')) existing.remove();
+    const label = svgNode('text', { x: x + 35, y: y - 170, class: 'notation-measure-number', 'font-size': 275 });
+    label.textContent = measure.dataset.measureNumber;
+    const area = svgNode('rect', { x, y: y - 60, width, height: height + 120, class: 'notation-measure-highlight' });
+    const line = svgNode('line', { x1: x, x2: x, y1: y - 60, y2: y + height + 60, class: 'notation-measure-playhead' });
+    measure.prepend(area); measure.append(label, line);
+    measureMarkers.set(Number(measure.dataset.measureIndex), { element: measure, anchor: firstLines[0], line, x, width });
+  }
+  for (const element of wrapper.querySelectorAll('[data-note-id]')) {
+    const head = element.querySelector('.notehead');
+    if (!head) continue;
+    let box;
+    try { box = head.getBBox(); } catch (_) { complete = false; continue; }
+    if (!(box.width > 0 && box.height > 0)) { complete = false; continue; }
+    for (const existing of element.querySelectorAll(':scope > .notation-hit-area')) existing.remove();
+    const hit = svgNode('rect', { x: box.x - 65, y: box.y - 65, width: box.width + 130, height: box.height + 130, fill: 'transparent', 'pointer-events': 'all', class: 'notation-hit-area' });
+    element.prepend(hit);
+  }
+  return complete;
+}
+if (typeof module !== 'undefined' && module.exports) module.exports = { loadNotationAssets, loadNotationProgressively, loadNotationOverlay, bindNotationPageGeometry, measureAtTime, mappedMeasure, validateNotationOverlay, measureFollowAction };
 (() => {
   'use strict';
   if (typeof window === 'undefined') return;
@@ -81,6 +137,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
     const elements = new Map();
     const measureElements = new Map();
     const measureMarkers = new Map();
+    const pendingGeometry = new Set();
     let selected = new Set();
     let sounding = new Set();
     let view = 'notation';
@@ -207,13 +264,18 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
       hint.hidden = view !== 'notation';
       interactionTools.hidden = view !== 'notation';
       if (original) original.hidden = view !== 'original';
+      hooks.onView?.(view);
       host.classList.toggle('show-original', view === 'original');
       notationTab.classList.toggle('is-current', view === 'notation');
       originalTab.classList.toggle('is-current', view === 'original');
       notationTab.setAttribute('aria-pressed', String(view === 'notation'));
       originalTab.setAttribute('aria-pressed', String(view === 'original'));
       lastFollowed = '';
-      if (view === 'notation' && measureElements.size) requestAnimationFrame(() => update(lastTime, { forceFollow: true }));
+      if (view === 'notation' && (measureElements.size || pendingGeometry.size)) requestAnimationFrame(() => {
+        if (view !== 'notation') return;
+        for (const wrapper of pendingGeometry) if (bindNotationPageGeometry(wrapper, measureMarkers)) pendingGeometry.delete(wrapper);
+        update(lastTime, { forceFollow: true });
+      });
     }
     notationTab.addEventListener('click', () => setView('notation'));
     originalTab.addEventListener('click', () => setView('original'));
@@ -557,14 +619,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
       const reportLink = node('a', '', '下载完整结构化与校验数据 ↗'); reportLink.href = '/assets/interactive.json'; reportLink.download = ''; auditBody.append(reportLink);
     }
 
-    function annotateMeasures() {
-      const symbols = new Map([...(model.notes || []), ...(model.rests || [])].map(symbol => [symbol.id, symbol]));
-      const svgNode = (name, attributes) => {
-        const element = document.createElementNS('http://www.w3.org/2000/svg', name);
-        for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
-        return element;
-      };
-      for (const measure of pages.querySelectorAll('g.measure:not(.bounding-box)')) {
+    function annotateMeasures(wrapper, symbols) {
+      for (const measure of wrapper.querySelectorAll('g.measure:not(.bounding-box)')) {
         const number = mappedMeasure([...measure.querySelectorAll('[id]')].map(element => element.id), symbols);
         if (number === null) continue;
         const canonical = model.measures.find(item => Number(item.index ?? item.number) === Number(number));
@@ -572,35 +628,21 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
         measure.dataset.measureIndex = String(number);
         measure.dataset.measureNumber = String(canonical.number);
         measureElements.set(Number(number), measure);
-        // Use the actual staff boundary, excluding clefs, ledger lines and lyrics.
-        const staffs = [...measure.querySelectorAll(':scope > g.staff:not(.bounding-box)')];
-        const first = staffs[0], last = staffs[staffs.length - 1];
-        const firstLines = first ? [...first.children].filter(element => element.localName === 'path') : [];
-        const lastLines = last ? [...last.children].filter(element => element.localName === 'path') : [];
-        if (!firstLines.length || !lastLines.length) continue;
-        const start = firstLines[0].getBBox(), bottom = lastLines[lastLines.length - 1].getBBox();
-        const x = start.x, y = start.y, width = start.width, height = Math.max(1, bottom.y - y);
-        for (const existing of measure.querySelectorAll(':scope > .mNum')) existing.remove();
-        const label = svgNode('text', { x: x + 35, y: y - 170, class: 'notation-measure-number', 'font-size': 275 });
-        label.textContent = String(canonical.number);
-        measure.append(label);
-        const area = svgNode('rect', { x, y: y - 60, width, height: height + 120, class: 'notation-measure-highlight' });
-        const line = svgNode('line', { x1: x, x2: x, y1: y - 60, y2: y + height + 60, class: 'notation-measure-playhead' });
-        measure.prepend(area); measure.append(line);
-        measureMarkers.set(Number(number), { element: measure, anchor: firstLines[0], line, x, width });
+        measure.classList.toggle('is-current-measure', Number(number) === activeMeasure);
       }
       host.dataset.mappedMeasures = String(measureElements.size);
       if (!notationOverlay) return;
-      for (const wrapper of pages.children) {
+      {
         const numbers = new Set([...wrapper.querySelectorAll('[data-measure-index]')].map(element => Number(element.dataset.measureIndex)));
         const lyrics = notationOverlay.measureLyrics.filter(lyric => numbers.has(Number(lyric.measure)));
-        if (!lyrics.length) continue;
+        if (!lyrics.length) return;
         const details = node('details', 'notation-page-lyrics');
         details.open = false;
         details.append(node('summary', '', '本页唱词 · 按小节与声部'));
         for (const lyric of lyrics) {
           const row = node('button', 'notation-lyric-row');
           row.dataset.lyricMeasure = String(lyric.measure);
+          row.classList.toggle('is-current', Number(lyric.measure) === activeMeasure);
           const current = model.measures.find(measure => Number(measure.index ?? measure.number) === Number(lyric.measure));
           row.append(node('strong', '', `${current?.number ?? lyric.measure} · ${lyric.part}`), node('span', '', lyric.lines.join(' / ')));
           row.addEventListener('click', () => {
@@ -617,7 +659,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
       model = nextModel;
       notes = new Map((model.notes || []).filter(note => note.pitch !== null && note.pitch !== undefined).map(note => [note.id, note]));
       selected = new Set([...selected].filter(id => notes.has(id)));
-      sounding.clear(); elements.clear(); measureElements.clear(); measureMarkers.clear(); lastFollowed = ''; activeMeasure = null;
+      sounding.clear(); elements.clear(); measureElements.clear(); measureMarkers.clear(); pendingGeometry.clear(); lastFollowed = ''; activeMeasure = null;
       badge.textContent = `${notes.size} 个可互动音符 · 结构化识谱`;
       partChoice.replaceChildren();
       const allParts = node('option', '', '全部声部'); allParts.value = ''; partChoice.append(allParts);
@@ -628,65 +670,93 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
       rangeEnd.value = String(Math.min(4, maxMeasure));
       buildAudit();
       const token = ++svgLoadToken;
-      pages.replaceChildren(node('p', 'notation-loading', '正在加载互动谱…'));
       const interactivePages = model.pagesInteractive || model.interactivePages || [];
-      const overlayRequest = loadNotationOverlay(hooks.notationOverlayUrl, model);
-      const [assets, overlay] = await Promise.all([loadNotationAssets(interactivePages, model.revision), overlayRequest]);
-      notationOverlay = overlay && !overlay.error ? overlay : null;
-      if (token !== svgLoadToken) return;
-      let failedPages = 0;
-      const loaded = assets.map(asset => {
-        const page = asset.page;
+      const wrappers = new Map(interactivePages.map(page => {
         const wrapper = node('section', 'notation-page'); wrapper.dataset.page = String(page.page);
-        wrapper.append(node('div', 'notation-page-label', `互动谱 ${String(page.page).padStart(2, '0')}`));
+        wrapper.append(node('div', 'notation-page-label', `互动谱 ${String(page.page).padStart(2, '0')}`), node('p', 'notation-loading', '正在加载本页互动谱…'));
+        return [page, wrapper];
+      }));
+      pages.replaceChildren(...wrappers.values());
+      host.dataset.notationLoading = interactivePages.length ? 'loading' : 'ready';
+      host.dataset.loadedPages = '0';
+      host.dataset.mappedNotes = '0'; host.dataset.unmappedSvgNotes = '0'; host.dataset.mappedMeasures = '0';
+      const symbols = new Map([...(model.notes || []), ...(model.rests || [])].map(symbol => [symbol.id, symbol]));
+      const completed = new Set(), failed = new Set();
+      let missing = 0, loadingMessage = '', overlayError = '';
+      const overlayRequest = loadNotationOverlay(hooks.notationOverlayUrl, model);
+      const progress = () => {
+        if (token !== svgLoadToken) return;
+        const pending = interactivePages.length - completed.size;
+        host.dataset.loadedPages = String(completed.size - failed.size);
+        host.dataset.notationLoading = pending ? 'loading' : failed.size ? 'partial' : 'ready';
+        let message;
+        if (pending) message = `互动谱已载入 ${completed.size - failed.size} / ${interactivePages.length} 页，后续页面正在后台加载；已载入页面可点选播放。`;
+        else if (failed.size) message = `${failed.size} 页加载失败，可在对应页面重新加载；已载入页面仍可点选。`;
+        else if (overlayError) message = `${overlayError}；可使用原 PDF 对照唱词。`;
+        else if (measureElements.size < (model.measures || []).length) message = `已连接 ${measureElements.size} / ${model.measures.length} 个小节；缺失小节暂不能跟随定位，可重新加载。`;
+        else if (elements.size < notes.size) message = `已连接 ${elements.size} / ${notes.size} 个音符；未映射音符暂不能在谱面点选。`;
+        else message = '互动谱已就绪。单击音符快速试听，拖动框选后合成真实音色片段。';
+        // Background progress must not overwrite a user's selection/playback result.
+        if (!loadingMessage || status.textContent === loadingMessage) setStatus(message, !pending && (failed.size > 0 || !!overlayError));
+        loadingMessage = message;
+      };
+      const renderAsset = async asset => {
+        const overlay = await overlayRequest;
+        if (token !== svgLoadToken) return;
+        overlayError = overlay?.error || '';
+        notationOverlay = overlay && !overlay.error ? overlay : null;
+        const page = asset.page, wrapper = wrappers.get(page);
+        const label = node('div', 'notation-page-label', `互动谱 ${String(page.page).padStart(2, '0')}`);
+        wrapper.replaceChildren(label);
         const doc = asset.error ? null : new DOMParser().parseFromString(asset.text, 'image/svg+xml');
         const svg = doc?.documentElement;
         const error = asset.error || (svg?.localName !== 'svg' || doc.querySelector('parsererror') ? `互动谱第 ${page.page} 页格式错误` : '');
+        completed.add(page);
         if (error) {
-          failedPages += 1;
+          failed.add(page);
           wrapper.append(node('p', 'notation-loading', error));
           const retry = node('button', 'notation-button', '重新加载互动谱');
-          retry.addEventListener('click', () => refresh(model).catch(error => setStatus(error.message, true)));
-          wrapper.append(retry);
-          return wrapper;
+          retry.title = '只重新加载本页，保留其他页面与选区';
+          retry.addEventListener('click', async () => {
+            retry.disabled = true;
+            const [replacement] = await loadNotationAssets([page], model.revision);
+            if (token === svgLoadToken) await renderAsset(replacement);
+          });
+          wrapper.append(retry); progress(); if (completed.size === 1) updateSelection(); return;
         }
+        failed.delete(page);
         // Notation assets are local renderer output. SVG stays inert after insertion.
         for (const unsafe of svg.querySelectorAll('script, foreignObject')) unsafe.remove();
         for (const element of svg.querySelectorAll('*')) for (const attribute of [...element.attributes]) if (attribute.name.startsWith('on')) element.removeAttribute(attribute.name);
+        if (notationOverlay?.replaceUnverifiedLyrics) for (const element of svg.querySelectorAll('g.verse')) element.remove();
         wrapper.append(document.importNode(svg, true));
-        return wrapper;
-      });
-      if (token !== svgLoadToken) return;
-      pages.replaceChildren(...loaded);
-      if (notationOverlay?.replaceUnverifiedLyrics) for (const element of pages.querySelectorAll('g.verse')) element.remove();
-      annotateMeasures();
-      let missing = 0;
-      for (const element of pages.querySelectorAll('g.note, [data-note-id]')) {
-        const id = element.dataset.noteId || element.id;
-        const note = notes.get(id);
-        if (!note) { missing += 1; continue; }
-        element.dataset.noteId = id;
-        const head=element.querySelector('.notehead');
-        if(head){const b=head.getBBox();const hit=document.createElementNS('http://www.w3.org/2000/svg','rect');
-          hit.setAttribute('x',String(b.x-65));hit.setAttribute('y',String(b.y-65));hit.setAttribute('width',String(b.width+130));hit.setAttribute('height',String(b.height+130));
-          hit.setAttribute('fill','transparent');hit.setAttribute('pointer-events','all');hit.setAttribute('class','notation-hit-area');element.prepend(hit);}
-        element.setAttribute('tabindex', '0'); element.setAttribute('role', 'button');
-        element.setAttribute('aria-label', `${labelNote(note)}，点击快速试听`);
-        const title = document.createElementNS('http://www.w3.org/2000/svg', 'title'); title.textContent = labelNote(note); element.prepend(title);
-        elements.set(id, element);
-      }
-      if (!loaded.length) {
+        annotateMeasures(wrapper, symbols);
+        for (const element of wrapper.querySelectorAll('g.note, [data-note-id]')) {
+          const id = element.dataset.noteId || element.id;
+          const note = notes.get(id);
+          if (!note) { missing += 1; continue; }
+          element.dataset.noteId = id;
+          element.setAttribute('tabindex', '0'); element.setAttribute('role', 'button');
+          element.setAttribute('aria-label', `${labelNote(note)}，点击快速试听`);
+          const title = document.createElementNS('http://www.w3.org/2000/svg', 'title'); title.textContent = labelNote(note); element.prepend(title);
+          elements.set(id, element);
+          element.classList.toggle('is-sounding', sounding.has(id));
+        }
+        if (view !== 'notation' || !bindNotationPageGeometry(wrapper, measureMarkers)) pendingGeometry.add(wrapper);
+        host.dataset.mappedNotes = String(elements.size); host.dataset.unmappedSvgNotes = String(missing);
+        progress();
+        if (completed.size === 1) updateSelection(); else highlightSelection();
+        update(lastTime);
+      };
+      if (!interactivePages.length) {
         pages.append(node('p', 'notation-loading', '互动谱尚未生成，可切换原 PDF 对照。'));
         setStatus('互动谱尚未生成，可先使用原谱对照。', true);
+        updateSelection(); return;
       }
-      else if (failedPages) setStatus(`${failedPages} 页加载失败，可在对应页面重新加载；已载入页面仍可点选。`, true);
-      else if (overlay?.error) setStatus(`${overlay.error}；可使用原 PDF 对照唱词。`, true);
-      else if (measureElements.size < (model.measures || []).length) setStatus(`已连接 ${measureElements.size} / ${model.measures.length} 个小节；缺失小节暂不能跟随定位，可重新加载。`, true);
-      else if (elements.size < notes.size) setStatus(`已连接 ${elements.size} / ${notes.size} 个音符；未映射音符暂不能在谱面点选。`, true);
-      else setStatus('互动谱已就绪。单击音符快速试听，拖动框选后合成真实音色片段。');
-      host.dataset.mappedNotes = String(elements.size); host.dataset.unmappedSvgNotes = String(missing);
-      updateSelection();
-      update(lastTime, { forceFollow: true });
+      const loading = loadNotationProgressively(interactivePages, model.revision, renderAsset, { isCurrent: () => token === svgLoadToken });
+      loading.done.catch(error => { if (token === svgLoadToken) setStatus(error.message, true); });
+      await loading.firstPage;
+      if (token === svgLoadToken) update(lastTime, { forceFollow: true });
     }
 
     function update(globalTime, playbackOverride = {}) {

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import gzip
 import hmac
 import ipaddress
 import secrets
@@ -44,6 +45,28 @@ UI_FILES = {
 }
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 GENERATED_PATH = re.compile(r"[a-f0-9]{32}/mix\.(?:wav|mid|mp3)\Z")
+RESPONSE_CACHE_BYTES = 64 * 1024 * 1024
+GZIP_MIN_BYTES = 256
+
+
+def accepts_gzip(header):
+    """Honor explicit exclusions before a wildcard; reject malformed weights."""
+    weights = {}
+    for entry in header.split(","):
+        coding, *parameters = entry.strip().lower().split(";")
+        coding = coding.strip()
+        if coding not in ("gzip", "*"):
+            continue
+        weight, seen_q = 1.0, False
+        for parameter in parameters:
+            name, separator, value = parameter.strip().partition("=")
+            if name.strip() != "q" or seen_q or not separator or not re.fullmatch(r"(?:0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?)", value.strip()):
+                weight = 0.0
+                break
+            seen_q = True
+            weight = float(value.strip())
+        weights[coding] = min(weights.get(coding, 1.0), weight)
+    return weights.get("gzip", weights.get("*", 0.0)) > 0
 
 
 class AuthenticationRequired(ValueError):
@@ -326,6 +349,11 @@ class ScoreSite:
                  cache_grace=120, min_render_interval=2, site_config=None):
         self.root = Path(root).resolve()
         verify_release(self.root)
+        # This is process-local work on already verified, immutable data, not an
+        # HTTP/shared cache. Every protected route must authorize before using it.
+        self._response_cache = OrderedDict()
+        self._response_cache_size = 0
+        self._response_cache_guard = threading.Lock()
         self.runtime = Path(runtime).resolve()
         try:
             self.runtime.relative_to(self.root)
@@ -386,6 +414,23 @@ class ScoreSite:
                     "original": inside(self.root, movement["original"]),
                 }
         self.prune_cache()
+
+    def cached_bytes(self, key, build):
+        """Bound immutable representations for this release/process only."""
+        with self._response_cache_guard:
+            if key in self._response_cache:
+                self._response_cache.move_to_end(key)
+                return self._response_cache[key]
+            value = build()
+            if not isinstance(value, bytes):
+                raise TypeError("Immutable response must be bytes")
+            if len(value) <= RESPONSE_CACHE_BYTES:
+                while self._response_cache and self._response_cache_size + len(value) > RESPONSE_CACHE_BYTES:
+                    _, old = self._response_cache.popitem(last=False)
+                    self._response_cache_size -= len(old)
+                self._response_cache[key] = value
+                self._response_cache_size += len(value)
+            return value
 
     def prune_cache(self, required=0):
         """Prune only owned UUID output directories, never active/recent audio.
@@ -639,8 +684,22 @@ class Handler(BaseHTTPRequestHandler):
             works.append(item)
         return {"schemaVersion": value.get("schemaVersion", 1), "totals": value.get("totals", {}), "works": works}
 
-    def bytes_response(self, data, mime="application/json; charset=utf-8", status=200, download=None):
+    def immutable_response(self, key, build, mime, cache_control="no-store"):
+        data = self.site.cached_bytes(("identity", key), build)
+        return self.bytes_response(data, mime, immutable_key=key, cache_control=cache_control)
+
+    def bytes_response(self, data, mime="application/json; charset=utf-8", status=200, download=None, immutable_key=None, cache_control="no-store"):
         self.close_connection = True
+        compressed = False
+        # Opt in only at immutable, secret-free route call sites. Dynamic JSON
+        # (especially CSRF, login and feedback) must never be compressed here.
+        if (immutable_key is not None and status == 200 and not download and
+                self.headers.get("Range") is None and len(data) >= GZIP_MIN_BYTES and
+                accepts_gzip(",".join(self.headers.get_all("Accept-Encoding", [])))):
+            packed = self.site.cached_bytes(("gzip", immutable_key),
+                                           lambda: gzip.compress(data, compresslevel=6, mtime=0))
+            if len(packed) < len(data):
+                data, compressed = packed, True
         size = len(data)
         start, end, partial = self._range(size) if status == 200 else (0, size - 1, False)
         if start is None:
@@ -648,9 +707,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(206 if partial else status)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(max(0, end - start + 1)))
+        if immutable_key is not None:
+            self.send_header("Vary", "Accept-Encoding")
+        if compressed:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
         self.send_header("Connection", "close")
         self.send_header("Referrer-Policy", "same-origin")
         if status in (409, 429, 503):
@@ -691,11 +754,15 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return None, None, None
 
-    def file_response(self, path, download=False):
+    def file_response(self, path, download=False, compress=False):
         self.close_connection = True
         path = Path(path)
         if not path.is_file():
             return self.json_response({"error": "文件不存在"}, 404)
+        if (compress and not download and path.suffix.lower() in {".svg", ".js", ".css"}
+                and path.stat().st_size <= 8 * 1024 * 1024):
+            mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            return self.immutable_response(("static-file", str(path)), path.read_bytes, mime, "private, no-store")
         with path.open("rb") as stream:
             size = os.fstat(stream.fileno()).st_size
             start, end, partial = self._range(size)
@@ -787,7 +854,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.file_response(self.site.root / "library.sqlite3", True)
                 root_files = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/app.css": "app.css"}
                 if path in root_files:
-                    return self.file_response(self.site.root / root_files[path])
+                    return self.file_response(self.site.root / root_files[path], compress=True)
             else:
                 self.require_work(selected["work"]["id"])
                 if path == "/api/health":
@@ -798,7 +865,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.file_response(self.site.review_path(selected), True)
                 if path in ("/assets/interactive.json", "/assets/score.json"):
                     value = selected["model"] if path.endswith("interactive.json") else selected["projection"]
-                    return self.json_response(web_projection(public_projection(value), prefix))
+                    return self.immutable_response(("model", prefix, path),
+                        lambda: json.dumps(web_projection(public_projection(value), prefix), ensure_ascii=False).encode("utf-8"),
+                        "application/json; charset=utf-8")
                 if path == "/assets/notation-overlay.json":
                     relative = selected["movement"].get("notationOverlay")
                     if not relative:
@@ -811,9 +880,10 @@ class Handler(BaseHTTPRequestHandler):
                 if filename in UI_FILES:
                     mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
                     if filename == "calibration_ui.js":
-                        return self.bytes_response(READ_ONLY_CALIBRATION.encode("utf-8"), mime)
-                    source = (self.site.root / "ui/workbench" / filename).read_text(encoding="utf-8")
-                    return self.bytes_response(derive_ui(source, prefix, filename), mime)
+                        return self.immutable_response(("ui", prefix, filename),
+                                                       lambda: READ_ONLY_CALIBRATION.encode("utf-8"), mime)
+                    return self.immutable_response(("ui", prefix, filename),
+                        lambda: derive_ui((self.site.root / "ui/workbench" / filename).read_text(encoding="utf-8"), prefix, filename), mime)
                 for url, directory in (("/assets/", selected["bundle"] / "assets"), ("/original/", selected["original"])):
                     if path.startswith(url):
                         relative = path[len(url):]
@@ -821,7 +891,7 @@ class Handler(BaseHTTPRequestHandler):
                         # bundle JSON/HTML/configs never become a download route.
                         if Path(relative).suffix.lower() not in {".svg", ".png", ".jpg", ".jpeg", ".webp", ".pdf", ".mp3", ".wav", ".mid", ".musicxml"}:
                             return self.json_response({"error": "不存在的资源"}, 404)
-                        return self.file_response(inside(directory, relative))
+                        return self.file_response(inside(directory, relative), compress=url == "/assets/")
                 if path.startswith("/generated/"):
                     cache = self.site.runtime / selected["work"]["id"] / selected["movement"]["id"] / selected["model"]["revision"]
                     relative = path[len("/generated/"):]

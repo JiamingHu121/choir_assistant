@@ -45,8 +45,8 @@
       const footer=el('div',null,'card-footer');const open=el('button',work.status==='ready'?'打开排练工作台':'处理中','open');open.disabled=work.status!=='ready';open.onclick=()=>openWork(work.id);footer.append(open);card.append(footer);$('cards').append(card);
     }
   }
-  async function load() {
-    catalog=await api('/api/catalog');$('total').textContent=`${catalog.totals.ready} / ${catalog.totals.works} 首 · ${catalog.totals.notes.toLocaleString()} 音符`;
+  async function load(catalogRequest) {
+    catalog=await (catalogRequest||api('/api/catalog'));$('total').textContent=`${catalog.totals.ready} / ${catalog.totals.works} 首 · ${catalog.totals.notes.toLocaleString()} 音符`;
     const value=$('work-select').value;$('work-select').replaceChildren(el('option','选择曲目'));$('work-select').firstChild.value='';
     for(const work of catalog.works){const option=el('option',work.title+(work.status==='ready'?'':' · 处理中'));option.value=work.id;option.disabled=work.status!=='ready';$('work-select').append(option);}
     $('work-select').value=value;renderCards();
@@ -99,5 +99,5 @@
   $('home').onclick=goHome;
   $('data-toggle').onclick=()=>showData().catch(e=>message(e.message));$('data-close').onclick=()=>{querying++;$('data-panel').hidden=true;};$('query').onclick=query;
   if(location.protocol==='file:'){message('此导出需要 HTTP 服务；请使用独立 site_server.py 启动后打开返回的网址。');$('total').textContent='需要本地服务';return;}
-  refreshConfig().then(load).then(()=>{const id=location.hash.slice(1);if(id)openWork(id);}).catch(e=>message(e.message));
+  Promise.all([refreshConfig(),load(api('/api/catalog'))]).then(()=>{const id=location.hash.slice(1);if(id)openWork(id);}).catch(e=>message(e.message));
 })();

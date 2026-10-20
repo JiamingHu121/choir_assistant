@@ -14,13 +14,15 @@ test('opening a file shows the launcher and never fetches operational scripts',a
   assert.equal(s.elements['entry-command'].textContent,"'/tmp/a b'\\''c/workbench/start.command'");
   await s.elements['entry-copy'].onclick();assert.equal(s.copied.length,1);assert.equal(s.elements['entry-copy-status'].textContent,'已复制');
 });
-test('HTTP entry loads dependencies in their actual completion order',()=>{
-  const s=environment('http:');assert.deepEqual(s.scripts.map(script=>script.src),['pitch_core.js']);
-  for(let i=0;i<7;i++)s.scripts[i].onload();
+test('HTTP entry requests dependencies together, preserves execution order, and starts the app only once all succeeded',()=>{
+  const s=environment('http:');assert.deepEqual(s.scripts.map(script=>script.src),['pitch_core.js','pitch.js','interactive.js','console.js','metronome.js','calibration_ui.js']);
+  assert.ok(s.scripts.every(script=>script.async===false));
+  for(const i of [5,2,0,4,1])s.scripts[i].onload();
+  assert.equal(s.scripts.length,6);s.scripts[3].onload();
   assert.deepEqual(s.scripts.map(script=>script.src),['pitch_core.js','pitch.js','interactive.js','console.js','metronome.js','calibration_ui.js','app.js']);
 });
 test('missing resource is a visible error, not an infinite loading state',()=>{
-  const s=environment('http:');s.scripts[0].onerror();assert.equal(s.elements['entry-error'].hidden,false);assert.match(s.elements['entry-error'].textContent,/pitch_core.js/);assert.equal(s.scripts.length,1);
+  const s=environment('http:');s.scripts[0].onerror();for(const script of s.scripts.slice(1))script.onload();assert.equal(s.elements['entry-error'].hidden,false);assert.match(s.elements['entry-error'].textContent,/pitch_core.js/);assert.equal(s.scripts.length,6);
 });
 test('launch page styles remain local-file resolvable',()=>{
   const html=fs.readFileSync(require.resolve('../workbench/index.html'),'utf8');

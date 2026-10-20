@@ -30,6 +30,7 @@ function showPracticePosition(time,meta={}){
 const fmt=s=>`${Math.floor(Math.max(0,s)/60)}:${String(Math.floor(Math.max(0,s)%60)).padStart(2,'0')}`;
 function gains(){return Object.fromEntries(groups.map(g=>[g,solo&&solo!==g?0:Number($(`gain-${g}`).value)]));}
 function setStatus(s){$('render-status').textContent=s;}
+function loadOriginalImages(){for(const image of $('pages').querySelectorAll('img[data-src]')){image.src=image.dataset.src;delete image.dataset.src;}}
 function showRhythmStatus(model){
  const badge=$('score-validity');if(!badge)return;
  const check=model.rhythmValidation;
@@ -124,7 +125,7 @@ async function init(){
   $('title').textContent=score.title;$('subtitle').textContent=score.subtitle;$('duration').textContent=fmt(score.duration);$('seek').max=score.duration;
   for(const p of score.pages){
    const page=document.createElement('div');page.className='page';page.id=`page-${p.page}`;
-   const img=document.createElement('img');img.src=p.image;img.width=p.width;img.height=p.height;img.alt=`${score.title} 原谱第 ${p.page} 页`;if(p.page>2)img.loading='lazy';page.append(img);
+   const img=document.createElement('img');if(score.interactive)img.dataset.src=p.image;else img.src=p.image;img.width=p.width;img.height=p.height;img.alt=`${score.title} 原谱第 ${p.page} 页`;img.loading='lazy';page.append(img);
    const label=document.createElement('span');label.className='page-label';label.textContent=`原谱 ${String(p.page).padStart(2,'0')}`;page.append(label);
    $('pages').append(page);
   }
@@ -151,7 +152,7 @@ async function init(){
    const currentSettings=()=>({transpose:Number($('transpose').value),program:Number($('program').value),gains:gains(),practiceRate:Number($('speed').value),rhythmPolicy:$('draft-audio').checked?'draft':'strict'});
    // The main media element applies the speed once. Speaker-backed practice
    // requests separately synthesized timing and plays it at buffer rate one.
-   interactive=await initInteractive(canonical,{audio,seek,notationOverlayUrl:score.notationOverlay,originalAvailable:score.pages.length>0,settings:()=>{const {practiceRate,...sound}=currentSettings();return sound;},onSelection:ids=>pitchPanel?.setSelection(ids),onAudio:result=>switchAudio({...result,selection:true},true),restoreFull:()=>switchAudio(fullAudio||{audio:score.audio,wav:'/assets/base.wav',duration:score.duration,selection:false}),activeNoteIds:()=>playback.selection?new Set(playback.noteIds):null,onCorrection:()=>location.reload(),follow:()=>$('follow').checked});
+   interactive=await initInteractive(canonical,{audio,seek,notationOverlayUrl:score.notationOverlay,originalAvailable:score.pages.length>0,onView:view=>{if(view==='original')loadOriginalImages();},settings:()=>{const {practiceRate,...sound}=currentSettings();return sound;},onSelection:ids=>pitchPanel?.setSelection(ids),onAudio:result=>switchAudio({...result,selection:true},true),restoreFull:()=>switchAudio(fullAudio||{audio:score.audio,wav:'/assets/base.wav',duration:score.duration,selection:false}),activeNoteIds:()=>playback.selection?new Set(playback.noteIds):null,onCorrection:()=>location.reload(),follow:()=>$('follow').checked});
    consolePanel?.syncPanels();
    if(typeof initMetronome==='function')metronome=initMetronome(canonical,{audio,getPlayback:()=>playback,getRate:()=>audio.playbackRate,getQuarterBpm:()=>{
     const t=audio.currentTime+playback.offset;const m=canonical.measures.find(m=>t>=m.start&&t<m.end)||canonical.measures[0];return MetronomeCore.tempoAt(canonical,m.onset).bpm;
@@ -182,6 +183,6 @@ async function init(){
   $('draft-audio').onchange=()=>{pitchPanel?.updateSettings();setStatus($('draft-audio').checked?'允许生成草稿参考音；待校对节奏会保留在音频和音准报告中。':'生成和音准练习仅使用通过节奏检查的片段。');};
   document.addEventListener('keydown',e=>{if(e.code==='Space'&&!['INPUT','SELECT','BUTTON','TEXTAREA'].includes(document.activeElement.tagName)){e.preventDefault();toggle();}});
   const frame=()=>{if(!audio.paused)update();requestAnimationFrame(frame);};requestAnimationFrame(frame);update();
- }catch(e){$('position').textContent=`加载失败：${e.message}`;setStatus(e.message);}
+ }catch(e){loadOriginalImages();$('position').textContent=`加载失败：${e.message}`;setStatus(e.message);}
 }
 init();
