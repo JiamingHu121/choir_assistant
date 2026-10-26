@@ -1,5 +1,46 @@
 # Plugin package validation
 
+## v0.5.0 — regression and deployment acceptance
+
+The final repository suites passed **319 Python tests** and **91 JavaScript
+tests**. A regular wheel was built with the declared build backend, installed
+outside the source checkout, and checked for its authoring and web resources.
+The package scan excludes private scores, operator tools, runtime binaries,
+passwords and machine-specific paths.
+
+The new selection editor passes the JavaScript suite, including draft isolation,
+semitone bounds, six note values/dots, preview endpoints, undo/redo, typed
+requests, explicit natural-language confirmation, stale previews and reload
+context checks. Filesystem and HTTP tests cover source-only module export,
+manifest integrity, content-head protection, authenticated snapshot export/import,
+actual local bundle replacement, immutable original PDFs, backups, private
+password files, no redirects, bounded extraction, commit/ledger/artifact hashes
+and check-only behavior. Cross-module validation consumes the real editor export
+with the independent pull verifier.
+
+Target acceptance also exercised the real isolated worker: source-bound pitch
+correction, repeated semitone respelling, rhythm/dot rebuilding, SVG/MIDI/WAV/MP3
+generation and real preview delivery. A configured local model produced a typed
+proposal; explicit confirmation generated a separate unpublished preview.
+Temporary music publication survived a website release update; the original
+pinned baseline remained available and was restored as a new history head.
+
+Large snapshots exposed two real transport failures: a single large socket write
+could truncate despite download progress, and long public transfers could end
+early. Bounded server writes and fixed-head HTTP range downloads now have real
+HTTP regressions for slow readers, premature EOF, bounded retry, rate limits,
+changed totals and publication conflicts. Download completion and all artifact
+hashes remain prerequisites for updating local bundles and sync watermarks.
+
+Final public synchronization and zero-change repeat checks passed. Original
+music, notation, timing and text matched the pre-test model after restoration.
+The source plugin retains compatible reviewed lyric sidecars through verified
+copied bindings; mismatched musical addresses fail before switching library
+entries or watermarks. Original sidecar bytes remain untouched.
+See the [structured release receipt](release-validation-v0.5.0.json).
+These checks do not certify general OMR accuracy, unsupported
+natural-language edits or physical microphone/speaker performance.
+
 ## v0.4.0 — package regression
 
 On 2026-10-16, the final full suites passed: **191 Python tests** and

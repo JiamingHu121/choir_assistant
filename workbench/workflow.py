@@ -330,7 +330,7 @@ def plan(config):
                 "browserDeployment": "This command exports an asset bundle; it does not switch the running workbench"}}
 
 
-def build(config, output=None):
+def build(config, output=None, *, stage_callback=None):
     """Build a new bundle. Refuse existing output paths, including app asset paths."""
     from runtime import data_dir
     output = Path(output or config.get("output") or data_dir() / "projects" /
@@ -359,11 +359,16 @@ def build(config, output=None):
         stage = {"name": name, "status": "running", "startedAt": datetime.now(timezone.utc).isoformat()}
         manifest["stages"].append(stage)
         write_json(manifest_path, manifest)
+        if stage_callback:
+            stage_callback({"stage": name, "status": "running"})
         return time.perf_counter()
 
     def finish(started, **details):
         stage.update(status="complete", elapsedSeconds=round(time.perf_counter() - started, 6), **details)
         write_json(manifest_path, manifest)
+        if stage_callback:
+            stage_callback({"stage": stage["name"], "status": "complete",
+                            "elapsedSeconds": stage["elapsedSeconds"]})
 
     try:
         started = begin("input")

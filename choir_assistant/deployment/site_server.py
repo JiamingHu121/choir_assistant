@@ -1,7 +1,7 @@
 """Serve an exported, immutable choir library on one origin (Python 3.8+).
 
-Only mido and the copied playback/validation modules are needed at runtime.
-Source recognition, score editing, and engraving stay on the authoring machine.
+Playback uses the copied minimal runtime. Optional editing only queues requests;
+generation runs in a separately provisioned unprivileged worker.
 """
 from __future__ import annotations
 
@@ -354,6 +354,7 @@ class ScoreSite:
         self._response_cache = OrderedDict()
         self._response_cache_size = 0
         self._response_cache_guard = threading.Lock()
+        self._editor_movement_cache = OrderedDict()
         self.runtime = Path(runtime).resolve()
         try:
             self.runtime.relative_to(self.root)
@@ -363,6 +364,23 @@ class ScoreSite:
             raise ValueError("运行缓存必须位于冻结站点目录之外")
         self.runtime.mkdir(parents=True, exist_ok=True)
         self.access = SiteAccess(site_config, self.runtime, self.root)
+        self.editor = None
+        self.editor_export_lock = threading.BoundedSemaphore(1)
+        self.editor_module = None
+        editing = self.access.config.get("editor", {})
+        if editing.get("enabled") is True:
+            if not self.access.enabled:
+                raise ValueError("在线纠错需要启用曲目密码权限")
+            editor_root = Path(editing["root"]).absolute()
+            if editor_root == self.root or self.root in editor_root.parents:
+                raise ValueError("编辑服务目录必须在冻结发布包之外")
+            module = self.root / "runtime_modules/editor.py"
+            if module.is_file():
+                self.editor_module = load_module(module, "frozen_site_editor")
+            else:
+                from choir_assistant.deployment import editor
+                self.editor_module = editor
+            self.editor = self.editor_module.EditorClient(editor_root)
         for label, value, minimum, maximum in (
             ("max_render_seconds", max_render_seconds, 1, 1800),
             ("cache_bytes", cache_bytes, 1024 * 1024, 10 * 1024 ** 3),
@@ -479,7 +497,7 @@ class ScoreSite:
             raise ValueError("可执行程序必须为有效的绝对路径")
         return path.resolve()
 
-    def select(self, wid, mid=None):
+    def select(self, wid, mid=None, edit_head=None):
         work = self.release["works"].get(wid)
         if not work:
             raise ValueError("曲目不存在")
@@ -488,20 +506,55 @@ class ScoreSite:
         selected = self.movements.get((wid, mid))
         if not selected:
             raise ValueError("曲目段落不存在")
+        if self.editor:
+            baseline = self.editor_module.baseline_head(wid, mid, selected["model"]["revision"])
+            if edit_head != baseline:
+                record = self.editor.head(wid, mid) if edit_head is None else self.editor.commit(wid, mid, edit_head)
+                if record:
+                    key = (wid, mid, record["editHead"])
+                    with self._response_cache_guard:
+                        cached = self._editor_movement_cache.get(key)
+                    if cached is None:
+                        cached = self.editor.resolve(wid, mid, selected, record["editHead"])
+                        with self._response_cache_guard:
+                            self._editor_movement_cache[key] = cached
+                            while len(self._editor_movement_cache) > 2:
+                                self._editor_movement_cache.popitem(last=False)
+                    selected = cached
+            if not selected.get("editHead"):
+                selected = dict(selected, editHead=baseline,
+                                model=dict(selected["model"], editHead=baseline, editingEnabled=True, work=wid, movement=mid),
+                                projection=dict(selected["projection"], editHead=baseline, editingEnabled=True, work=wid, movement=mid))
         return selected, "/w/{}/{}/".format(wid, mid)
 
     def health(self):
         works = []
         for wid, work in self.release["works"].items():
-            movements = [{"id": mid, "revision": item["model"]["revision"], "loaded": True}
-                         for (work_id, mid), item in self.movements.items() if work_id == wid]
+            movements = []
+            for (work_id, mid), item in self.movements.items():
+                if work_id != wid:
+                    continue
+                selected, _ = self.select(wid, mid)
+                movement = {"id": mid, "revision": selected["model"]["revision"], "loaded": True}
+                if self.editor:
+                    movement.update(baseRevision=item["model"]["revision"], editHead=selected["editHead"])
+                movements.append(movement)
             works.append({"id": wid, "title": work["title"], "loaded": bool(movements), "movements": movements})
         return {"service": "choir-score-library-site", "readOnly": True, "works": works,
                 "loadedWorks": sum(work["loaded"] for work in works),
                 "synthesisAvailable": bool(self.fluidsynth and self.soundfont)}
 
     def symbols(self, query):
-        self.select(query.get("work", ""), query.get("movement"))
+        selected, _ = self.select(query.get("work", ""), query.get("movement"), query.get("editHead"))
+        if self.editor:
+            symbols = selected["model"].get("notes", []) + selected["model"].get("rests", [])
+            symbols = [row for row in symbols if ("part" not in query or row.get("part") == query["part"])
+                       and ("measure" not in query or row.get("measureIndex") == int(query["measure"]))]
+            symbols.sort(key=lambda row: (row.get("measureIndex", 0), row.get("start", 0), row["id"]))
+            limit, offset = max(1, min(int(query.get("limit", 100)), 500)), max(0, int(query.get("offset", 0)))
+            return {"total": len(symbols), "offset": offset, "limit": limit,
+                    "revision": selected["model"]["revision"], "editHead": selected["editHead"],
+                    "symbols": public_projection(symbols[offset:offset + limit])}
         clauses, values = ["work_id=?"], [query["work"]]
         for column, key in (("movement_id", "movement"), ("part", "part"), ("measure_index", "measure")):
             if key in query:
@@ -670,6 +723,53 @@ class Handler(BaseHTTPRequestHandler):
                 "authRequired": self.site.access.enabled, "feedbackEnabled": self.site.access.feedback_enabled,
                 "csrfToken": token}
 
+    def editor_actor(self, work):
+        self.require_work(work)
+        token = self.cookies().get(self.site.access.cookie_name(work), "")
+        return sha256(token.encode()).hexdigest()
+
+    def editor_context(self, selected, prefix, query):
+        if not self.site.editor:
+            return {"enabled": False, "work": selected["work"]["id"], "movement": selected["movement"]["id"],
+                    "revision": selected["model"]["revision"], "jobs": [], "history": []}
+        work, movement = selected["work"]["id"], selected["movement"]["id"]
+        actor = self.editor_actor(work)
+        def job_view(value):
+            result = public_projection(value)
+            if result.get("bundleId"):
+                bundle = self.site.editor.job_bundle(work, movement, actor, result["id"])
+                url = prefix + "api/editor/asset?jobId=" + result["id"] + "&name="
+                model = read_json(bundle / "assets/interactive.json")
+                audio = next((name for name in ("base.wav", "base.mp3") if (bundle / "assets" / name).is_file()), None)
+                pages = [{"url": url + quote("assets/" + Path(page["svg"]).name, safe=""), "page": page.get("page")}
+                         for page in model.get("pagesInteractive", []) if isinstance(page.get("svg"), str)]
+                result["preview"] = {"model": url + quote("assets/interactive.json", safe=""), "pages": pages}
+                if audio:
+                    result["preview"]["audio"] = url + quote("assets/" + audio, safe="")
+            return result
+        if "jobId" in query:
+            return {"job": job_view(self.site.editor.job(work, movement, actor, query["jobId"])), "worker": self.site.editor.worker_status()}
+        history = self.site.editor.history(work, movement)
+        base = self.site.movements[(work, movement)]
+        if not any(isinstance(row.get("head"), str) and row["head"].startswith("baseline-") for row in history):
+            history.append({"head": self.site.editor_module.baseline_head(work, movement, base["model"]["revision"]),
+                            "revision": base["model"]["revision"], "reason": "原始发布基线", "created": None})
+        return {"enabled": True, "work": work, "movement": movement, "revision": selected["model"]["revision"],
+                "publishedHead": selected["editHead"], "capabilities": {"presets": True, "naturalLanguage": True, "persistentWorkerRequired": True},
+                "worker": self.site.editor.worker_status(),
+                "csrfToken": self.public_config()["csrfToken"], "history": history,
+                "jobs": [job_view(value) for value in self.site.editor.jobs(work, movement, actor)]}
+
+    @staticmethod
+    def pin_editor_urls(value, head):
+        if isinstance(value, dict):
+            return {key: Handler.pin_editor_urls(item, head) for key, item in value.items()}
+        if isinstance(value, list):
+            return [Handler.pin_editor_urls(item, head) for item in value]
+        if isinstance(value, str) and value.startswith(("/assets/", "/original/", "/generated/")):
+            return value + ("&" if "?" in value else "?") + "editHead=" + quote(head)
+        return value
+
     def public_catalog(self):
         value = read_json(self.site.root / "catalog.json")
         # Only homepage metadata is public; score content and source/download
@@ -681,6 +781,13 @@ class Handler(BaseHTTPRequestHandler):
             item = {key: work[key] for key in allowed if key in work}
             item["movements"] = [{key: movement[key] for key in ("id", "title", "revision") if key in movement}
                                  for movement in work.get("movements", [])]
+            if self.site.editor:
+                heads = self.site.editor.heads()["heads"]
+                for movement in item["movements"]:
+                    head = heads.get(work["id"] + "/" + movement["id"])
+                    if head:
+                        movement.update(revision=head["revision"], editHead=head["editHead"])
+                        item["sourceReviewed"] = False
             works.append(item)
         return {"schemaVersion": value.get("schemaVersion", 1), "totals": value.get("totals", {}), "works": works}
 
@@ -688,7 +795,7 @@ class Handler(BaseHTTPRequestHandler):
         data = self.site.cached_bytes(("identity", key), build)
         return self.bytes_response(data, mime, immutable_key=key, cache_control=cache_control)
 
-    def bytes_response(self, data, mime="application/json; charset=utf-8", status=200, download=None, immutable_key=None, cache_control="no-store"):
+    def bytes_response(self, data, mime="application/json; charset=utf-8", status=200, download=None, immutable_key=None, cache_control="no-store", transfer_timeout=60):
         self.close_connection = True
         compressed = False
         # Opt in only at immutable, secret-free route call sites. Dynamic JSON
@@ -724,7 +831,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + quote(download))
         self.end_headers()
         if self.command != "HEAD":
-            self.wfile.write(data[start:end + 1])
+            # sendall's socket timeout covers a whole write, so one large body
+            # can fail despite steady download progress. Keep that socket bound
+            # on small writes and separately bound the complete transfer.
+            deadline = time.monotonic() + transfer_timeout
+            view = memoryview(data)
+            try:
+                for offset in range(start, end + 1, 256 * 1024):
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Response transfer deadline exceeded")
+                    self.wfile.write(view[offset:min(offset + 256 * 1024, end + 1)])
+            except OSError:
+                # Headers are already committed. Close rather than append a
+                # second HTTP error response to a partially delivered archive.
+                self.close_connection = True
+                raise ConnectionResetError("Response transfer interrupted") from None
 
     def json_response(self, data, status=200):
         self.bytes_response(json.dumps(data, ensure_ascii=False).encode("utf-8"), status=status)
@@ -802,7 +923,9 @@ class Handler(BaseHTTPRequestHandler):
             bits = path.split("/", 4)
             if len(bits) != 5:
                 raise ValueError("工作台地址无效")
-            selected, prefix = self.site.select(bits[2], bits[3])
+            if self.site.editor:
+                self.require_work(bits[2])
+            selected, prefix = self.site.select(bits[2], bits[3], query.get("editHead"))
             return "/" + bits[4], query, selected, prefix
         return path, query, None, None
 
@@ -857,6 +980,34 @@ class Handler(BaseHTTPRequestHandler):
                     return self.file_response(self.site.root / root_files[path], compress=True)
             else:
                 self.require_work(selected["work"]["id"])
+                if path == "/api/site-config":
+                    return self.json_response(self.public_config())
+                if path == "/api/editor":
+                    return self.json_response(self.editor_context(selected, prefix, query))
+                if path.startswith("/api/editor/"):
+                    if not self.site.editor:
+                        return self.json_response({"error": "此站点尚未启用在线纠错"}, 404)
+                    work, movement = selected["work"]["id"], selected["movement"]["id"]
+                    actor = self.editor_actor(work)
+                    if path == "/api/editor/heads":
+                        return self.json_response({"schemaVersion": 1, "head": self.site.editor.head(work, movement)})
+                    if path == "/api/editor/export":
+                        self.site.access.rate("editor-export:" + actor, 3, 60)
+                        if not self.site.editor_export_lock.acquire(blocking=False):
+                            raise ResourceBusy("正在导出曲谱版本，请稍后再试")
+                        try:
+                            return self.bytes_response(self.site.editor.export(work, movement, query.get("head")), "application/x-tar", download="score-edit-snapshot.tar", transfer_timeout=300)
+                        finally:
+                            self.site.editor_export_lock.release()
+                    if path == "/api/editor/asset":
+                        name = query.get("name", "")
+                        if not re.fullmatch(r"assets/(?:interactive\.json|notation-[A-Za-z0-9_-]+\.svg|base\.(?:wav|mp3|mid)|canonical\.musicxml|validation\.json)", name):
+                            raise ValueError("不允许的预览产物")
+                        bundle = self.site.editor.job_bundle(work, movement, actor, query.get("jobId"))
+                        if name.endswith(".json"):
+                            return self.json_response(public_projection(read_json(bundle / name)))
+                        return self.file_response(inside(bundle, name))
+                    return self.json_response({"error": "不存在的编辑接口"}, 404)
                 if path == "/api/health":
                     return self.json_response({"service": "sheet-to-audio-workbench", "revision": selected["model"]["revision"], "readOnly": True})
                 if path == "/api/calibration":
@@ -865,7 +1016,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.file_response(self.site.review_path(selected), True)
                 if path in ("/assets/interactive.json", "/assets/score.json"):
                     value = selected["model"] if path.endswith("interactive.json") else selected["projection"]
-                    return self.immutable_response(("model", prefix, path),
+                    if self.site.editor:
+                        value = self.pin_editor_urls(value, selected["editHead"])
+                    return self.immutable_response(("model", prefix, path, selected.get("editHead")),
                         lambda: json.dumps(web_projection(public_projection(value), prefix), ensure_ascii=False).encode("utf-8"),
                         "application/json; charset=utf-8")
                 if path == "/assets/notation-overlay.json":
@@ -873,6 +1026,10 @@ class Handler(BaseHTTPRequestHandler):
                     if not relative:
                         return self.json_response({"error": "此曲目暂无谱面附注"}, 404)
                     overlay = read_json(inside(self.site.root, relative))
+                    if self.site.editor and overlay.get("revision") != selected["model"]["revision"]:
+                        overlay = dict(overlay, derivedFromRevision=overlay.get("revision"),
+                                       revision=selected["model"]["revision"],
+                                       derivation="measure-bound display annotations; source bytes preserved")
                     return self.json_response(web_projection(public_projection(overlay), prefix))
                 if path == "/assets/validation.json":
                     return self.json_response(public_projection(read_json(selected["bundle"] / "assets/validation.json")))
@@ -880,8 +1037,9 @@ class Handler(BaseHTTPRequestHandler):
                 if filename in UI_FILES:
                     mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
                     if filename == "calibration_ui.js":
-                        return self.immutable_response(("ui", prefix, filename),
-                                                       lambda: READ_ONLY_CALIBRATION.encode("utf-8"), mime)
+                        if not self.site.editor:
+                            return self.immutable_response(("ui", prefix, filename),
+                                                           lambda: READ_ONLY_CALIBRATION.encode("utf-8"), mime)
                     return self.immutable_response(("ui", prefix, filename),
                         lambda: derive_ui((self.site.root / "ui/workbench" / filename).read_text(encoding="utf-8"), prefix, filename), mime)
                 for url, directory in (("/assets/", selected["bundle"] / "assets"), ("/original/", selected["original"])):
@@ -901,7 +1059,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.json_response({"error": "不存在的页面"}, 404)
         except AuthenticationRequired as error:
             return self.json_response({"error": str(error), "authenticationRequired": True}, 401)
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        except ResourceBusy as error:
+            return self.json_response({"error": str(error)}, 429)
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+            if self.site.editor_module and isinstance(error, self.site.editor_module.EditConflict):
+                return self.json_response({"error": str(error), "conflict": True}, 409)
             return self.json_response({"error": "请求参数或路径无效"}, 400)
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -929,7 +1091,7 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/api/correction", "/api/calibration"):
                 self.close_connection = True
                 return self.json_response({"error": "排练网站为只读版本；请联系维护者发布曲谱修订"}, 403)
-            if not ((selected is None and path in ("/api/open", "/api/login", "/api/feedback")) or (selected and path in ("/api/render", "/api/selection"))):
+            if not ((selected is None and path in ("/api/open", "/api/login", "/api/feedback")) or (selected and path in ("/api/render", "/api/selection", "/api/editor"))):
                 self.close_connection = True
                 return self.json_response({"error": "不存在的操作"}, 404)
             if self.headers.get_content_type() != "application/json":
@@ -948,6 +1110,22 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(raw, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("参数必须为有限数值")))
             if not isinstance(data, dict):
                 raise ValueError("参数必须为对象")
+            if selected and path == "/api/editor":
+                work, movement = selected["work"]["id"], selected["movement"]["id"]
+                actor = self.editor_actor(work)
+                if not self.site.editor:
+                    return self.json_response({"error": "此站点尚未启用在线纠错"}, 404)
+                if not self.csrf_valid(data):
+                    return self.json_response({"error": "页面验证已过期，请刷新后重试"}, 403)
+                self.site.access.rate("editor-submit:" + actor, 60, 60)
+                self.site.access.rate("editor-submit-global", 120, 60)
+                try:
+                    result = self.site.editor.submit(work, movement, actor, data)
+                except self.site.editor_module.EditConflict as error:
+                    return self.json_response({"error": str(error), "conflict": True}, 409)
+                except self.site.editor_module.EditorUnavailable as error:
+                    return self.json_response({"error": str(error)}, 503)
+                return self.json_response(dict(result, jobId=result["id"]), 202)
             if selected is None and path in ("/api/login", "/api/feedback"):
                 if not self.csrf_valid(data):
                     return self.json_response({"error": "页面验证已过期，请刷新后重试"}, 403)
@@ -967,6 +1145,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_work(item["work"]["id"])
                 return self.json_response({"url": url, "revision": item["model"]["revision"], "work": item["work"]["id"]})
             self.require_work(selected["work"]["id"])
+            if self.site.editor and data.get("editHead"):
+                selected, prefix = self.site.select(selected["work"]["id"], selected["movement"]["id"], data["editHead"])
+                if data.get("revision") != selected["model"]["revision"]:
+                    return self.json_response({"error": "练习版本已变化，请刷新曲谱"}, 409)
             if not self.site.lock.acquire(blocking=False):
                 return self.json_response({"error": "正在生成音频，请稍后再试"}, 409)
             try:

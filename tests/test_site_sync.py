@@ -180,6 +180,16 @@ class SiteSyncTests(TestCase):
         self.assertEqual(result["changedFiles"], 2)
         self.assertEqual([item.args[1] for item in call.call_args_list], ["inspect"])
 
+    def test_online_editor_heads_block_stale_export_before_transfer(self):
+        release, entries, plan, archive = self.planned()
+        state = remote.inspect(self.profile, self.service)
+        state["editorHeads"] = {"fixture/main": "a" * 64}
+        with mock.patch.object(sync, "_export", return_value=(release, entries, plan["revisions"], {})), \
+                mock.patch.object(sync, "_call", return_value=state) as call:
+            with self.assertRaisesRegex(RuntimeError, "pull and review"):
+                sync.sync_site(self.profile_path)
+        self.assertEqual([item.args[1] for item in call.call_args_list], ["inspect"])
+
     def test_explicit_readiness_is_checked_before_export_or_network(self):
         value = dict(self.profile, requireReady=True)
         self.profile_path.write_text(json.dumps(value))

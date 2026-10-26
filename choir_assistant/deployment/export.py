@@ -1,7 +1,8 @@
 """Export an external score library as a standalone, verified rehearsal website.
 
-Recognition, corrections, and engraving never run on the site. Optional original
-PDF rendering occurs offline only, using the bundle-frozen PDF.
+The HTTP process does not run recognition or authoring. Optional independent
+workers receive hash-indexed source modules; original PDF rendering remains an
+explicit offline step using the bundle-frozen PDF.
 """
 from __future__ import annotations
 
@@ -27,6 +28,59 @@ UI_FILES = {
     "pitch-worklet.js", "pitch-worker.js", "pitch-reference-worklet.js",
 }
 REQUIRED_UI = UI_FILES - {"pitch-worklet.js", "pitch-reference-worklet.js"}
+
+
+def validate_content_heads(value):
+    """Content watermarks contain identifiers and digests, never filesystem paths."""
+    if not isinstance(value, dict) or len(value) > 10000:
+        raise ValueError("Editor contentHeads must be a bounded map")
+    for key, head in value.items():
+        if (not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}/[A-Za-z0-9][A-Za-z0-9_-]{0,127}", key)
+                or not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{64}", head)):
+            raise ValueError("Invalid editor content head work/movement or digest")
+    return dict(value)
+
+
+def local_editor_metadata(library):
+    path = Path(library) / ".online-editor-heads.json"
+    if not path.exists() and not path.is_symlink():
+        return {}, {}
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
+        raise ValueError("Local editor watermarks must be a bounded regular file")
+    value = read_json(path)
+    bindings = {}
+    if isinstance(value, dict) and "schemaVersion" in value:
+        if value.get("schemaVersion") != 1 or set(value) - {"schemaVersion", "contentHeads", "bindings"} or "contentHeads" not in value:
+            raise ValueError("Invalid local editor watermark schema")
+        bindings = value.get("bindings", {})
+        value = value["contentHeads"]
+    heads = validate_content_heads(value)
+    if not isinstance(bindings, dict) or set(bindings) - set(heads):
+        raise ValueError("Invalid local editor bundle bindings")
+    for key, binding in bindings.items():
+        if (not isinstance(binding, dict) or set(binding) != {"revision", "bundleManifestSha256"}
+                or not isinstance(binding["revision"], str) or not 1 <= len(binding["revision"]) <= 200
+                or not isinstance(binding["bundleManifestSha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", binding["bundleManifestSha256"])):
+            raise ValueError("Invalid local editor bundle binding")
+    return heads, bindings
+
+
+def local_content_heads(library, verify_bindings=False):
+    heads, bindings = local_editor_metadata(library)
+    if verify_bindings and heads:
+        records = library_catalog.entries(library)
+        for scope in heads:
+            work, movement = scope.split("/")
+            entry = records.get(work, {})
+            target = next((item for item in entry.get("movements", []) if item.get("id") == movement), None)
+            binding = bindings.get(scope)
+            if target is None or binding is None:
+                raise ValueError("Online editor head lacks its incorporated bundle binding; pull or deliberately merge/rebase before exporting: " + scope)
+            bundle, _ = library_catalog.active_bundle(target, library)
+            model = read_json(bundle / "assets/interactive.json")
+            if model.get("revision") != binding["revision"] or digest(bundle / "manifest.json") != binding["bundleManifestSha256"]:
+                raise ValueError("Active score bundle changed after online import; deliberately merge/rebase online edits before exporting: " + scope)
+    return heads
 
 
 def read_json(path):
@@ -269,6 +323,8 @@ def export_site(output, library_root, plugin_root=None, prepare_original=False):
         else:
             raise ValueError("Export destination must stay outside frozen scores and plugin code")
     records = library_catalog.entries(library)
+    content_heads, content_bindings = local_editor_metadata(library)
+    bound_scopes = set()
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".site-export-", dir=output.parent))
     preparation = Path(tempfile.mkdtemp(prefix=".pdf-prepare-", dir=output.parent))
@@ -285,6 +341,14 @@ def export_site(output, library_root, plugin_root=None, prepare_original=False):
                 copy_verified(plugin / "workbench" / name, staging / "ui/workbench" / name)
         for name in ("playback.py", "validation.py"):
             copy_verified(plugin / "workbench" / name, staging / "runtime_modules" / name)
+        copy_verified(Path(__file__).with_name("editor.py"), staging / "runtime_modules/editor.py")
+        # Source only: a separately provisioned low-privilege worker may import
+        # this frozen core. No runtime, engine binary, model or credential is copied.
+        authoring_sources = sorted((plugin / "workbench").glob("*.py")) + sorted((plugin / "workbench").glob("*.cjs"))
+        authoring_sources += [plugin / "synth/__init__.py", plugin / "synth/render.py", plugin / "runtime.py"]
+        for source in authoring_sources:
+            copy_verified(source, staging / "authoring_modules" / source.relative_to(plugin))
+        write_json(staging / "editor-protocol.json", {"schemaVersion": 1, "contentHeads": content_heads})
         release = {"schemaVersion": 1, "works": {}}
         catalog = {"schemaVersion": 1, "works": []}
         evidence = {"status": "passed", "works": {}, "frozenBundlesUnmodified": True,
@@ -330,6 +394,13 @@ def export_site(output, library_root, plugin_root=None, prepare_original=False):
                         raise ValueError("Export must stay outside authoring project directories")
                 destination = base / mid
                 manifest, model, checks = copy_bundle(source_bundle, staging / destination / "bundle")
+                scope = wid + "/" + mid
+                if scope in content_heads:
+                    binding = content_bindings.get(scope)
+                    if (binding is None or model.get("revision") != binding["revision"]
+                            or digest(staging / destination / "bundle/manifest.json") != binding["bundleManifestSha256"]):
+                        raise ValueError("Exported score no longer matches its online import binding; deliberately merge/rebase before exporting: " + scope)
+                    bound_scopes.add(scope)
                 pdf, source_hash = library_catalog.source_pdf(source_bundle, project, entry, library)
                 if pdf_hash is not None and source_hash != pdf_hash:
                     raise ValueError("Movements in one work must share the same original PDF")
@@ -382,6 +453,8 @@ def export_site(output, library_root, plugin_root=None, prepare_original=False):
         write_json(staging / "export-verification.json", evidence)
         hashes = [{"path": file.relative_to(staging).as_posix(), "bytes": file.stat().st_size,
                    "sha256": digest(file)} for file in sorted(staging.rglob("*")) if file.is_file()]
+        if set(content_heads) != bound_scopes:
+            raise ValueError("Online content head has no exported bound movement; pull or deliberately merge/rebase before exporting")
         write_json(staging / "file-manifest.json", {"schemaVersion": 1, "files": hashes})
         staging.rename(output)
         return {"output": str(output), "works": len(release["works"]), "files": len(hashes) + 1,

@@ -95,8 +95,9 @@ no remote mutation. Honor a host's existing readiness rule; `--ready` records an
 already satisfied confirmation, not a new authorization.
 
 Keep the deployment profile, keys, site data and runtime outside the plugin.
-The website runs a frozen standalone serving package and never calls this skill
-or the author's import/calibration service. Domain and gateway setup are separate
+The website runs a frozen standalone serving package and never calls this skill.
+Optional online correction queues typed tasks for a separately provisioned
+unprivileged worker; the HTTP process does not run recognition or authoring. Domain and gateway setup are separate
 from sync; don't silently repoint DNS or reuse a personal research SSH account.
 Report which machines remain in the traffic/credential path when discussing
 isolation. A successful deploy does not establish full-score recognition or
@@ -114,3 +115,27 @@ pages and save a revision/PDF-bound notation sidecar as described in deployment.
 Bind text to canonical measures, parts and original-page evidence; do not guess
 syllable-to-note alignment or rewrite accepted musical durations to add lyrics.
 Check later playback, rests, tied tails, paused seeks and PDF-to-score returns.
+
+
+## Selected-note correction and online edits
+
+For manual workbench corrections, natural-language requests, task recovery or
+history restoration, read [manual correction](../../docs/MANUAL_CORRECTION.md).
+Semitone/value controls first change a browser draft. Quick simple-tone audition
+keeps original onsets; the server preview performs the real rhythm rebuild.
+Preserve the distinct draft, preview, ready-to-publish and published states.
+On a stale worker heartbeat, retain and poll the existing durable task rather
+than treating queue time as progress or submitting duplicates.
+Require the submitter's explicit difference confirmation for a natural-language
+proposal and their separate publish action. Every corresponding work-password
+holder may publish and restore music; do not introduce administrator approval.
+A shared session is an authorization/audit handle, not a verified personal name.
+
+Before pushing a library with online edits, let configured `editorSync` pull and
+validate complete score snapshots and update actual bundle pointers. Never
+manually advance `.online-editor-heads.json` over old music or bypass a stale-head
+failure. `--check-only` compares without downloading. Keep the password in an
+owner-only private file, not chat text, a URL, a shell argument or the repository. Report
+the pull backup and publication receipts separately. Optional isolated worker,
+Node/WASM engine and supervisor provisioning are independent operator setup;
+routine sync must not execute release modules as root or change that setup.

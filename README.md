@@ -6,13 +6,16 @@ This repository is a **local-execution Codex plugin and a standalone CLI**. It p
 
 ![Workbench generated from the original practice fixture](docs/workbench-example.png)
 
-**v0.4.0** adds optional per-score password access, a private feedback inbox,
-source-reviewed lyric overlays, measure numbering and timeline-based score
-following. Isolated hosts support incremental staging with an explicit final
-administrator activation step. Authoring, hosting, credentials and domain
-configuration stay independent. [Deployment workflow](docs/DEPLOYMENT.md)
-· [Release notes](docs/RELEASE-v0.4.0.md) ·
-[Reusable proofreading contract](docs/SOURCE_REVIEW.md).
+**v0.5.0** adds selectable manual correction with semitone and note-value
+controls, immediate draft audition, durable preview tasks, explicit publication
+and history restoration, including the durable original musical baseline across
+software updates. Every corresponding work-password holder can publish;
+natural-language suggestions require difference confirmation first. Optional
+sync pulls verified online musical edits before exporting the local library.
+[Correction and synchronization](docs/MANUAL_CORRECTION.md) ·
+[Deployment workflow](docs/DEPLOYMENT.md) ·
+[Release notes](docs/RELEASE-v0.5.0.md) ·
+[Source-review contract](docs/SOURCE_REVIEW.md).
 
 ## Install the plugin
 
@@ -74,7 +77,9 @@ choir-assistant site sync --profile /absolute/private/site-profile.json
 ```
 
 The destination is configured once. Subsequent syncs verify the current library
-and transfer changed files. A user-service destination activates an immutable
+and transfer changed files. When private `editorSync` is enabled, sync first
+pulls changed online score snapshots and updates the actual local bundle pointers;
+stale content watermarks block a push. `--check-only` never pulls. A user-service destination activates an immutable
 release and restores the previous release on failed validation. A separately
 administered service-account destination stages a complete release and reports
 `pendingAdminActivation`; its administrator performs the final activation.
@@ -82,7 +87,9 @@ If that administrator separately installs a reviewed data-only publisher once,
 `publisherMode: "isolated-auto"` can handle routine updates without another
 password prompt. The plugin stages a generation-bound request and reports real
 publisher success or failure; a pending upload is not an activated release.
-`site export` works offline, and the exported site runs without the authoring plugin. No production domain,
+`site export` works offline, and the exported site runs without the authoring plugin.
+Optional online correction uses a separately configured unprivileged worker;
+exported source modules are hash-indexed, and runtime engines stay external. No production domain,
 account, key or score is bundled. See [setup, profile, rollback and security
 boundaries](docs/DEPLOYMENT.md).
 

@@ -352,6 +352,32 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
         setStatus(`快速音高试听：${midiName(pitch)}，${seconds(duration)}。真实音色请点击「合成并播放所选」。`);
       } catch (error) { setStatus(`快速试听失败：${error.message}。可使用片段合成。`, true); }
     }
+    let draftVoices = [];
+    async function previewNotes(picked) {
+      if (!picked.length) return;
+      const Context = window.AudioContext || window.webkitAudioContext;
+      if (!Context) { setStatus('设备不支持快速简音试听，请生成服务器预览。', true); return; }
+      try {
+        previewContext ||= new Context(); await previewContext.resume();
+        if (previewVoice) { try { previewVoice.stop(); } catch (_) {} }
+        for (const voice of draftVoices) { try { voice.stop(); } catch (_) {} }
+        draftVoices = [];
+        const current = settings(), rate = Math.max(.1, Number(hooks.audio?.playbackRate || 1));
+        const first = Math.min(...picked.map(n => Number(n.start))), now = previewContext.currentTime + .02;
+        for (const note of picked.slice(0, 128)) {
+          if (note.pitch === null || !Number.isFinite(Number(note.pitch))) continue;
+          const start = now + (Number(note.start) - first) / rate;
+          const duration = Math.max(.07, Math.min(12, (Number(note.end) - Number(note.start)) / rate));
+          const voice = previewContext.createOscillator(), gain = previewContext.createGain();
+          voice.type = 'triangle'; voice.frequency.value = 440 * 2 ** ((Number(note.pitch) + Number(current.transpose || 0) - 69) / 12);
+          const level = .1 * Number(hooks.audio?.volume ?? .8) / Math.max(1, Math.sqrt(picked.length));
+          gain.gain.setValueAtTime(0, start); gain.gain.linearRampToValueAtTime(level, start + .012);
+          gain.gain.setValueAtTime(level * .75, start + Math.max(.02, duration - .025)); gain.gain.linearRampToValueAtTime(0, start + duration);
+          voice.connect(gain); gain.connect(previewContext.destination); voice.start(start); voice.stop(start + duration + .02); draftVoices.push(voice);
+        }
+        setStatus(`草稿简音试听 ${Math.min(128, picked.length)} 个音符${picked.length > 128 ? '（仅前 128 个）' : ''}。`);
+      } catch (error) { setStatus(`快速试听失败：${error.message}`, true); }
+    }
     function focusNote(id) {
       setView('notation');
       const element = elements.get(id);
@@ -813,6 +839,6 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { loadNota
     setView('notation');
     await refresh(model);
     document.getElementById('zoom')?.addEventListener('change', event => { pages.style.width = `${event.target.value}%`; });
-    return { update, refresh, setView, getSelected: () => [...selected], getModel: () => model };
+    return { update, refresh, setView, getSelected: () => [...selected], getModel: () => model, previewNotes };
   };
 })();

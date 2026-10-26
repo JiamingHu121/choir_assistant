@@ -114,6 +114,32 @@ class SiteExportTests(unittest.TestCase):
             self.register()
         self.assertEqual(self.register(overwrite=True)["revision"], "fixture-v1")
 
+    def test_editor_protocol_watermarks_are_manifest_bound(self):
+        catalog.write_json(self.library / ".online-editor-heads.json", {"schemaVersion": 1, "contentHeads": {"study/main": "a" * 64}, "bindings": {"study/main": {"revision": self.model["revision"], "bundleManifestSha256": catalog.digest(self.bundle / "manifest.json")}}})
+        release, _ = self.exported("editor-protocol")
+        protocol = json.loads((release / "editor-protocol.json").read_text())
+        self.assertEqual(protocol, {"schemaVersion": 1, "contentHeads": {"study/main": "a" * 64}})
+        manifest = json.loads((release / "file-manifest.json").read_text())
+        files = {entry["path"]: entry for entry in manifest["files"]}
+        self.assertEqual(files["editor-protocol.json"]["sha256"], export.digest(release / "editor-protocol.json"))
+        self.assertIn("runtime_modules/editor.py", files)
+
+    def test_optional_authoring_sources_are_minimal_and_manifest_bound(self):
+        release, _ = self.exported("authoring-modules")
+        manifest = catalog.read_json(release / "file-manifest.json")
+        indexed = {entry["path"]: entry for entry in manifest["files"]}
+        expected = {"authoring_modules/" + path.relative_to(PLUGIN).as_posix()
+                    for pattern in ("*.py", "*.cjs") for path in (PLUGIN / "workbench").glob(pattern)}
+        expected.update({"authoring_modules/synth/__init__.py", "authoring_modules/synth/render.py", "authoring_modules/runtime.py"})
+        actual = {path.relative_to(release).as_posix() for path in (release / "authoring_modules").rglob("*") if path.is_file()}
+        self.assertEqual(actual, expected)
+        self.assertIn("authoring_modules/workbench/editing.py", actual)
+        self.assertIn("authoring_modules/workbench/engrave_node.cjs", actual)
+        for name in actual:
+            self.assertEqual(indexed[name]["sha256"], catalog.digest(release / name))
+            self.assertEqual((release / name).read_bytes(), (PLUGIN / name.removeprefix("authoring_modules/")).read_bytes())
+        self.assertFalse(any("__pycache__" in name or name.endswith((".sf2", ".wasm", ".so", ".dylib")) for name in actual))
+
     def test_bundle_mutation_fails_atomically(self):
         (self.bundle / "assets/base.mid").write_bytes(b"changed")
         with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):

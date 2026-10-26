@@ -261,8 +261,44 @@ class IsolatedSite:
                 "changedFiles": len(changed), "reusedFiles": len(entries) - len(changed),
                 "transferBytes": sum(entries[name]["bytes"] for name in changed)}
 
+    def editor_heads(self):
+        """Read only public editor head digests; never private jobs or score data."""
+        path = self.root / "editing/public/heads.json"
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return None
+        root_owned(self.root / "editing", directory=True)
+        public = path.parent
+        if public.resolve() != public or public.is_symlink():
+            raise ValueError("Editor metadata must not use symlink directories")
+        protocol, _ = bounded_json(self.root / "editing/protocol.json", SYSTEM_OWNER)
+        if (protocol.get("schemaVersion") != 1 or protocol.get("editorProtocol") != 1
+                or type(protocol.get("builderUid")) is not int or protocol["builderUid"] <= 0):
+            raise ValueError("Invalid root-owned editor protocol")
+        builder = protocol["builderUid"]
+        info = public.stat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o022 or info.st_uid not in (SYSTEM_OWNER, builder):
+            raise ValueError("Editor metadata directory must be controlled by root or the independent builder")
+        head_owner = path.lstat().st_uid
+        if head_owner not in (SYSTEM_OWNER, builder):
+            raise ValueError("Editor head metadata must be owned by root or the configured builder")
+        value, _ = bounded_json(path, head_owner, maximum=4 * 1024 * 1024)
+        if value.get("schemaVersion") != 1 or not isinstance(value.get("heads"), dict) or len(value["heads"]) > 10000:
+            raise ValueError("Invalid public editor heads")
+        result = {}
+        for key, record in value["heads"].items():
+            if (not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}/[A-Za-z0-9][A-Za-z0-9_-]{0,127}", key)
+                    or not isinstance(record, dict) or not isinstance(record.get("editHead"), str) or not SHA256.fullmatch(record["editHead"])):
+                raise ValueError("Invalid public editor head identifier or digest")
+            result[key] = record["editHead"]
+        return result
+
     def inspect(self):
         result = {key: value for key, value in self.state().items() if not key.startswith("_")}
+        heads = self.editor_heads()
+        if heads is not None:
+            result["editorHeads"] = heads
         if self.mode == AUTO_MODE:
             result.update(self.status())
         return result

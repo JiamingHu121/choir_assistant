@@ -162,8 +162,8 @@ def make_midi(model,destination,settings=None,note_ids=None):
 
 def fit_audio_duration(path, duration):
     """Keep selected rests and a defined tail; avoid FluidSynth's extra seconds."""
-    import shutil, subprocess
-    ffmpeg=shutil.which('ffmpeg')
+    import os, shutil, subprocess
+    ffmpeg=shutil.which(os.environ.get('CHOIR_ASSISTANT_FFMPEG') or 'ffmpeg')
     if not ffmpeg:raise RuntimeError('未找到 ffmpeg')
     source=Path(path);target=source.with_name(source.stem+'.duration.wav')
     subprocess.run([ffmpeg,'-y','-i',str(source),'-af',f'apad=whole_dur={duration:.6f},atrim=duration={duration:.6f}',

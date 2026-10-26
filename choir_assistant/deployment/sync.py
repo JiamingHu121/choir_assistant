@@ -78,6 +78,13 @@ def load_profile(path):
     for field in ("requireReady", "prepareOriginal"):
         if field in value and not isinstance(value[field], bool):
             raise ValueError(field + " must be a boolean")
+    if "editorSync" in value:
+        config = value["editorSync"]
+        if not isinstance(config, dict) or set(config) - {"enabled", "passwordFile"} or type(config.get("enabled")) is not bool:
+            raise ValueError("editorSync must contain enabled and an optional private passwordFile")
+        if config["enabled"]:
+            from .editor_sync import validate_password_file
+            config["passwordFile"] = str(validate_password_file(_absolute(config.get("passwordFile"), "editorSync passwordFile")))
     library, output = Path(value["libraryRoot"]), Path(value["outputRoot"])
     if library == output or library in output.parents and (output / "catalog.json").exists():
         raise ValueError("Output cannot replace the library itself")
@@ -197,16 +204,41 @@ def _archive(release, changed, destination):
                 stream.addfile(info, content)
 
 
+def verify_editor_heads(local, remote_heads):
+    """Fail closed when a local export has not incorporated online music edits."""
+    from .export import validate_content_heads
+    local = validate_content_heads(local)
+    remote_heads = validate_content_heads(remote_heads)
+    stale = sorted(key for key, head in remote_heads.items() if local.get(key) != head)
+    if stale:
+        raise RuntimeError("Local library has not incorporated online editor heads: " + ", ".join(stale) + "; pull and review online edits before syncing")
+    return True
+
+
 def sync_site(profile_path, check_only=False, ready=False, prepare_original=None, retry_failed=False):
     profile = load_profile(profile_path)
     _ready(profile, ready)
     if retry_failed and profile["publisherMode"] != "isolated-auto":
         raise ValueError("--retry-failed requires an isolated-auto publisher")
+    pull = None
+    if profile.get("editorSync", {}).get("enabled") and not check_only:
+        from .editor_sync import pull_online_edits
+        before = _call(profile, "inspect")
+        if before.get("editorHeads"):
+            pull = pull_online_edits(profile, before["editorHeads"])
     release, entries, expected, exported = _export(profile, prepare_original)
     state = _call(profile, "inspect")
+    if "editorHeads" in state:
+        protocol_path = release / "editor-protocol.json"
+        protocol = json.loads(protocol_path.read_text(encoding="utf-8")) if protocol_path.is_file() else {"schemaVersion": 1, "contentHeads": {}}
+        if protocol.get("schemaVersion") != 1 or set(protocol) != {"schemaVersion", "contentHeads"}:
+            raise ValueError("Export has invalid editor protocol metadata")
+        verify_editor_heads(protocol["contentHeads"], state["editorHeads"])
     plan = _plan(release, entries, expected, state)
     summary = {key: value for key, value in plan.items() if key not in ("files", "changed")}
     summary.update({"localRelease": str(release), "checkOnly": bool(check_only)})
+    if pull is not None:
+        summary["editorPull"] = pull
     if profile["publisherMode"] == "isolated-auto":
         summary.update(publisherMode="isolated-auto", publisherStatus=state["publisherStatus"],
                        pendingRequest=state["pendingRequest"])

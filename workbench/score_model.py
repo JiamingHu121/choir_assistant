@@ -270,6 +270,27 @@ def _set_articulations(note, values):
             note.remove(container)
 
 
+def _set_reviewed_beams(note, values):
+    """Replace only explicitly edited ordinary beam endpoints."""
+    if not isinstance(values, list):
+        raise ValueError("Reviewed beams must be a list")
+    allowed = {"begin", "continue", "end", "forward hook", "backward hook"}
+    numbers = set()
+    for value in values:
+        if (not isinstance(value, dict) or set(value) != {"number", "value"}
+                or type(value["number"]) is not int or not 1 <= value["number"] <= 8
+                or value["number"] in numbers or value["value"] not in allowed):
+            raise ValueError("Reviewed beams require unique levels 1 through 8 and ordinary endpoints")
+        numbers.add(value["number"])
+    for child in note.findall("beam"):
+        note.remove(child)
+    before = next((i for i, child in enumerate(note) if child.tag in ("notations", "lyric", "play", "listen")), len(note))
+    for offset, value in enumerate(sorted(values, key=lambda item: item["number"])):
+        child = ET.Element("beam", {"number": str(value["number"])})
+        child.text = value["value"]
+        note.insert(before + offset, child)
+
+
 def _clear_tuplets(note, values):
     if not isinstance(values, list):
         raise ValueError("tuplets correction must be a reviewed endpoint list or []")
@@ -979,7 +1000,7 @@ def build_model(corrections=None, source_path=None, omr_path=None, tempo_context
                     if change:
                         if not isinstance(change, dict):
                             raise ValueError(f"Correction {stable_id} must be a dictionary")
-                        if not set(change).issubset({"pitch", "pitchName", "duration", "articulations", "tuplets", "tieTypes", "slurs", "notation", "calibration", "reason", "evidence", "status"}):
+                        if not set(change).issubset({"pitch", "pitchName", "duration", "articulations", "tuplets", "tieTypes", "slurs", "notation", "beams", "calibration", "reason", "evidence", "status"}):
                             raise ValueError(f"Unknown correction fields for {stable_id}")
                         used_corrections.add(stable_id)
                         reason = change.get("reason", "用户音符校对")
@@ -1003,6 +1024,9 @@ def build_model(corrections=None, source_path=None, omr_path=None, tempo_context
                         if "slurs" in change:
                             _set_slurs(child, change["slurs"])
                             correction(stable_id, number, "slurs", original_notation["slurs"], change["slurs"], reason)
+                        if "beams" in change:
+                            _set_reviewed_beams(child, change["beams"])
+                            correction(stable_id, number, "beams", original_notation["beams"], change["beams"], reason)
                     elif original_duration_node is None and not is_grace and notated:
                         duration = notated
                         correction(stable_id, number, "duration", None, float(duration), "源duration缺失，按已明确的type、附点与连音比例重建。", True)

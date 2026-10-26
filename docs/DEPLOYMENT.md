@@ -3,8 +3,10 @@
 The authoring plugin and hosted website have separate lifecycles. Import, review,
 calibration and engraving run locally. Publishing consumes completed, hash-bound
 bundles and creates an immutable website snapshot. A host runs the exported
-`site_server.py`, its frozen playback modules and assets; it does not install or
-call the authoring plugin, Audiveris, Java, or a hosted agent. Updating the plugin
+`site_server.py`, its frozen playback modules and assets; the HTTP process does
+not install or call the authoring plugin, Audiveris, Java, or a hosted agent.
+Optional online correction uses a separately provisioned low-privilege worker
+and hash-indexed source modules; see [manual correction and synchronization](MANUAL_CORRECTION.md). Updating the plugin
 does not update a website until `site sync` is explicitly run.
 
 Keep the library, export directories, deployment profile, SSH keys, SoundFont,
@@ -50,9 +52,9 @@ python3 /absolute/site-releases/first-preview/site_server.py \
   --origin http://127.0.0.1:8780
 ```
 
-The serving runtime needs Python 3.8+, `mido`, a working native FluidSynth and a
-licensed SF2 file. Its requirements differ from the Python 3.12+ authoring
-environment. Install and test these tools on the target OS; do not copy a binary
+The standalone serving and narrow editor-worker path is tested with Python
+3.9+, `mido`, a working native FluidSynth and a licensed SF2 file. The complete
+authoring CLI still requires Python 3.12+. These are separate runtime contracts. Install and test these tools on the target OS; do not copy a binary
 from a newer macOS onto an older Mac. The server can serve existing audio without
 a synthesis engine, but a synthesis-enabled deployment must pass a real short
 selection render before acceptance.
@@ -396,3 +398,29 @@ download while the server still uploads the full model to the CDN. Validate
 first-page interaction, a slow or missing later page, PDF/notation round trips
 during loading, and playback positioning on the final page. Keep score revisions
 and audio hashes separate from interface and transport performance checks.
+
+
+## v0.5 online music editing
+
+Read [the correction and sync contract](MANUAL_CORRECTION.md) before enabling
+`editor.enabled` in private website settings. Password holders publish musical
+heads, while an independently provisioned worker creates verified immutable
+previews. This grants no website-code or root-publisher authority. Exported
+`authoring_modules` are source-only and covered by `file-manifest.json`.
+
+Private `editorSync: {"enabled": true, "passwordFile": "/absolute/private/work-password.txt"}`
+enables authenticated HTTPS pull before export. The password file is `0600`;
+never put a literal password in a public example or command argument. Pull
+updates real score pointers and resets source-review status, preserving the
+original PDF and pre-pull backups. Stale content heads fail closed, including
+in `--check-only`, which never downloads. A host-side activation guard must
+recheck content heads under the editor publication lock to protect against
+publication after the client's final inspection.
+
+
+Before privileged editor provisioning, pass the target OS's sandbox syntax gate
+as an ordinary user, then the actual dedicated-UID native full-build preflight.
+See [operator acceptance gates](MANUAL_CORRECTION.md#operator-acceptance-gates).
+Passing package tests is not live service acceptance. Preserve the durable
+original musical baseline through software updates; do not derive history's
+original restore target from the newly activated release bundle.
