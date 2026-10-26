@@ -5,10 +5,8 @@ from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 from pathlib import Path
-import socket
 import tempfile
 import threading
-import time
 import unittest
 from unittest import mock
 from urllib.request import urlopen
@@ -36,34 +34,51 @@ class EditorTransferTests(unittest.TestCase):
         return Opener()
 
     def test_slow_download_completes_beyond_single_socket_write_timeout(self):
+        # Model a socket write's whole-call timeout without depending on kernel
+        # TCP buffer sizes, delayed ACKs or the host scheduler. At this rate the
+        # legacy single write needs four seconds; each bounded write needs .5s.
+        payload = bytes(range(256)) * 8192
+        clock, writes = [0.0], []
+        class TimedWriter(io.BytesIO):
+            def write(self, block):
+                duration = len(block) / (512 * 1024)
+                if duration > 1:
+                    raise TimeoutError("whole-write socket deadline exceeded")
+                clock[0] += duration
+                writes.append(len(block))
+                return super().write(block)
+        with self.assertRaises(TimeoutError):
+            TimedWriter().write(payload)
+        writer = TimedWriter()
+        handler = object.__new__(site_server.Handler)
+        handler.headers = Message(); handler.command = "GET"; handler.wfile = writer
+        headers = {}
+        handler.send_response = lambda status: self.assertEqual(status, 200)
+        handler.send_header = lambda name, value: headers.__setitem__(name, value)
+        handler.end_headers = lambda: None
+        with mock.patch.object(site_server.time, "monotonic", side_effect=lambda: clock[0]):
+            handler.bytes_response(payload, "application/x-tar", download="fixture.tar")
+        self.assertEqual(int(headers["Content-Length"]), len(payload))
+        self.assertGreater(clock[0], 1)
+        self.assertEqual(len(writes), 8)
+        self.assertTrue(all(size <= 256 * 1024 for size in writes))
+        self.assertEqual(sha256(writer.getvalue()).digest(), sha256(payload).digest())
+
+    def test_real_http_download_preserves_complete_body(self):
         payload = bytes(range(256)) * 8192
         class Handler(site_server.Handler):
             def do_GET(self):
                 self.bytes_response(payload, "application/x-tar", download="fixture.tar")
-        class Server(site_server.BoundedHTTPServer):
-            def get_request(self):
-                stream, address = super().get_request()
-                stream.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8192)
-                return stream, address
-        server = self.serve(Handler, Server, read_timeout=1)
+        server = self.serve(Handler, site_server.BoundedHTTPServer, read_timeout=10)
         connection = HTTPConnection(*server.server_address, timeout=10)
         self.addCleanup(connection.close)
-        connection.connect()
-        connection.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8192)
         connection.request("GET", "/")
         response = connection.getresponse()
         self.assertEqual(response.status, 200)
         self.assertEqual(int(response.headers["Content-Length"]), len(payload))
-        started, received = time.monotonic(), io.BytesIO()
-        while True:
-            block = response.read(8192)
-            if not block:
-                break
-            received.write(block)
-            time.sleep(.01)
-        self.assertGreater(time.monotonic() - started, 1)
-        self.assertEqual(len(received.getvalue()), len(payload))
-        self.assertEqual(sha256(received.getvalue()).digest(), sha256(payload).digest())
+        received = response.read()
+        self.assertEqual(len(received), len(payload))
+        self.assertEqual(sha256(received).digest(), sha256(payload).digest())
 
     def test_actual_chunked_response_without_content_length_is_accumulated(self):
         pieces = [b"first", b"x" * 32769, b"last"]

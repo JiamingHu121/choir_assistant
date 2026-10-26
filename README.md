@@ -6,7 +6,7 @@ This repository is a **local-execution Codex plugin and a standalone CLI**. It p
 
 ![Workbench generated from the original practice fixture](docs/workbench-example.png)
 
-**v0.5.0** adds selectable manual correction with semitone and note-value
+**v0.5.1** includes selectable manual correction with semitone and note-value
 controls, immediate draft audition, durable preview tasks, explicit publication
 and history restoration, including the durable original musical baseline across
 software updates. Every corresponding work-password holder can publish;
@@ -14,7 +14,7 @@ natural-language suggestions require difference confirmation first. Optional
 sync pulls verified online musical edits before exporting the local library.
 [Correction and synchronization](docs/MANUAL_CORRECTION.md) ·
 [Deployment workflow](docs/DEPLOYMENT.md) ·
-[Release notes](docs/RELEASE-v0.5.0.md) ·
+[Release notes](docs/RELEASE-v0.5.1.md) ·
 [Source-review contract](docs/SOURCE_REVIEW.md).
 
 ## Install the plugin

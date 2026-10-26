@@ -1,5 +1,14 @@
 # Plugin package validation
 
+## v0.5.1 — portable transfer regression
+
+The Linux runner exposed a kernel-dependent slow-socket fixture in v0.5.0.
+The corrected regression explicitly rejects the legacy whole-body write and
+accepts the complete chunked transfer through a deterministic timed writer;
+a separate real HTTP test verifies complete bytes and SHA. Production code is
+unchanged. See [patch notes](RELEASE-v0.5.1.md) and the
+[patch receipt](release-validation-v0.5.1.json).
+
 ## v0.5.0 — regression and deployment acceptance
 
 The final repository suites passed **319 Python tests** and **91 JavaScript

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "version": "0.5.1",
+  "recordedAtUTC": "2026-10-26T17:10:07.144702+00:00",
+  "regression": {
+    "python": 320,
+    "javascript": 91,
+    "passed": true
+  },
+  "previousReleaseAcceptance": "release-validation-v0.5.0.json",
+  "patch": {
+    "trigger": "Linux kernel socket buffering made the artificial one-second slow-download fixture fail.",
+    "productionCodeUnchangedFrom": "bb6b458c6105d8417172e2a3a122d25ec93005a4",
+    "legacyWholeWriteExplicitlyRejected": true,
+    "chunkedWriteCompletesAfterWholeWriteBudget": true,
+    "separateRealHttpCompleteBodyAndHash": true,
+    "websiteMigrationRequired": false
+  },
+  "distribution": {
+    "versionsAgree": true,
+    "regularWheelInstalledOutsideSource": true,
+    "wheelSha256": "bac5752da31e5fa14b73fd9dabc0b0f9ca0cf1ca523b23b44293b318f90b4a8f"
+  },
+  "sourceSha256": {
+    "tests/test_editor_transfer.py": "3f6d9f077aef9b5b040061a7f57942e86d31280da0e8843db26a5cdc98b6c24a",
+    "choir_assistant/__init__.py": "baa982dce7700d43b01e00b96851614b1ef8aeb1a12a3b2fc0737d1fde38497c",
+    "pyproject.toml": "d0e8261be13a4b99108acf562a797308a1cfc2406874fc77223b4c5d9b6929a2",
+    "plugin.json": "f11c84b1a5a0cf63070025a5e3c53716dca0ed42bd281e2c3b02be6e10f5bc08",
+    ".codex-plugin/plugin.json": "4f0257247e659296e4ceb3b1a7aa20b7af820d53ffdf97a50df16244ce5fea8b",
+    "README.md": "35ec07db542e4550c43e39d791e036158fb8d3384c3dc30bc7bea7658cc9187d",
+    "docs/RELEASE-v0.5.1.md": "e5d4ee7bd530c1879154a538072747fb406862aba7ccd78f3d9c40588eaaee04",
+    "docs/VALIDATION.md": "7c29d3a6778203a00b38b20bc010f63720b4cbfc0252b4902549a89945183d83"
+  }
+}
