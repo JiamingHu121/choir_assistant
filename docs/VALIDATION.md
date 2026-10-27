@@ -1,5 +1,14 @@
 # Plugin package validation
 
+## v0.6.0 — batch publication and community interface
+
+Regressions cover three separate selections in one publication, rejection of an
+outdated preview, natural-language conflict handling, independent cards,
+first-use guidance and manual reopening, anonymous messages, text-only rendering,
+CSRF/origin boundaries, bounded storage, and private-inbox separation. See the
+[structured receipt](release-validation-v0.6.0.json) for completed checks and their
+scope; release history below retains earlier acceptance evidence.
+
 ## v0.5.1 — portable transfer regression
 
 The Linux runner exposed a kernel-dependent slow-socket fixture in v0.5.0.

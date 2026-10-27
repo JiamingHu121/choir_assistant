@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "choir-assistant",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Import and review PDF choral scores, then optionally publish independent rehearsal websites.",
   "author": {
     "name": "Jiaming Hu",

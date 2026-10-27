@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "version": "0.6.0",
+  "recordedAtUTC": "2026-10-27T13:04:32.750773+00:00",
+  "regression": {
+    "python": 328,
+    "javascript": 102,
+    "passed": true
+  },
+  "selection": {
+    "threeSelectionsOnePreviewAndPublication": true,
+    "laterEditBlocksOldPreview": true,
+    "savedJobCannotDropCurrentDraft": true,
+    "sameFieldNaturalLanguageConflictRejectedAtomically": true,
+    "staleHeadPreservesDraftAndBlocksSubmit": true,
+    "separateCards": 4,
+    "browserThreeIndependentEditsCounted": true
+  },
+  "onboarding": {
+    "firstUse": true,
+    "completionSkipAndEscapeRemembered": true,
+    "manualHelpReopen": true,
+    "desktopAnd390PixelBrowserReview": true
+  },
+  "messageBoard": {
+    "realLocalBrowserPostAndReadback": true,
+    "publicTextOnlyFeed": true,
+    "privateFeedbackSeparate": true,
+    "originCsrfAndRateLimitRegressions": true,
+    "persistentBoundedDatabase": true
+  },
+  "distribution": {
+    "status": "passed",
+    "version": "0.6.0",
+    "wheelSha256": "2cdd3b5f05de9680e0a5e855f53e8ff93568c66693d5eccacd885b4c6b4130a6",
+    "regularWheelInstalledOutsideSource": true
+  },
+  "publicDeployment": {
+    "status": "pending-management-connectivity",
+    "existingProductionChanged": false
+  },
+  "boundaries": [
+    "Browser batch is the current page draft; saved historical jobs are independent.",
+    "Local UI and server tests do not establish public deployment acceptance.",
+    "This interface release does not certify general OMR or physical microphone accuracy."
+  ],
+  "sourceSha256": {
+    ".codex-plugin/plugin.json": "df00be63ffd18b7662cecba5c5b5799e8d2111ed4c1ceef416f77b334fe117b2",
+    "README.md": "6d4c060c331240995a07e23c5d6dbe1b62cd6fb21edef047bdf907bdf1161385",
+    "choir_assistant/__init__.py": "31e8b719b361c9485f34b128ef80b139019a3feb844b285e2a60b425b6e2004d",
+    "choir_assistant/deployment/site_server.py": "55753ed72bde8c171f2195cbe1659674716216f3d2a8f4c0b3e7274cdb8ecf70",
+    "choir_assistant/deployment/static/app.css": "2ba4c68d22101c1657d28806a179e15f6be8b9ba16e18b7cad055f5c916d77a4",
+    "choir_assistant/deployment/static/app.js": "44ea690a3adf6717a04a497967e1b84dc847c8185288b2a37c89642de0d3cb45",
+    "choir_assistant/deployment/static/index.html": "fce3793f65b86ca2f9493f106c938a542fc7804328a43b9c654476948b6c003d",
+    "docs/MANUAL_CORRECTION.md": "d1b5a540a5f4100615b5ee82340187c7b77f098739f807a3bde6856e28afcef3",
+    "docs/RELEASE-v0.6.0.md": "dfb089a50622d862775e0aded591e783225e506b264ad101331368ae9541e0a5",
+    "docs/VALIDATION.md": "be263f66628ed6e1ce49b9cad3016ecc6b37f4d335bcfc666553adfda357b64a",
+    "plugin.json": "c253fa848e3a98bebfda1b8d9c92e8e0e6e2b4824bdf526ae2bc0d31d4715247",
+    "pyproject.toml": "ab9cb46b6cb3347bf01eb3a36f3ac8dd0f93de06e1ccc16e89d29231f6d3f1b1",
+    "tests/test_message_board.py": "4985d3cf98a46485e7e559a31fefaa84b79bab8ccfcc0e1134cf7fefe5d30992",
+    "tests/test_selection_editor.cjs": "0640702fee3b3422d6b7844ea99752ddb3d7754a03b7be39958a7c1ab7fe5242",
+    "tests/test_site_frontend.cjs": "dd408368fa634c7fd92932b486294a9c4aa1302d37aa5637eae5bf44d6fc7fb0",
+    "workbench/calibration_ui.css": "ad8942d1c54c63c64f6ea62b92a138285d3c475340521bcc4c074ea8a39cb12b",
+    "workbench/calibration_ui.js": "9a0b584b9a80fbbb10b3cabaf33d1a2a627640b92468a5e7b0904e8a8a7c4cc6",
+    "workbench/index.html": "6b4a91b5bd8374d8f7137d41f3f9dbf4ff4eca72f8d8e5dccae2dc2d59a0219a"
+  }
+}

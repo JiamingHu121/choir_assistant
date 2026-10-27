@@ -17,12 +17,20 @@ Repeated semitone changes retain the written letter within double accidentals;
 beyond that range they use a standard enharmonic spelling in the edit direction
 (for example, F#4 raised twice becomes G#4). The receipt records that respelling.
 
+The four independent cards cover the current batch, selected-note controls,
+natural-language requests and saved tasks/history. Switching selections retains
+earlier edits in the current page's draft. For example, three edits to three
+different notes become one complete preview and one explicit publication. The
+current-batch card shows all changed notes; a newer edit invalidates an older
+preview, including when that old task is reopened. Closing or reloading the page
+does not reconstruct an unsaved draft from historical jobs.
+
 The panel shows original values beside the browser draft and supports undo,
 redo and reset. Quick WebAudio audition uses a simple tone and draft pitch and
 duration while retaining original onsets. It is a local sketch, not the final
 reflowed rhythm or chosen instrument. The original PDF remains the reference.
 
-**Save draft and generate preview** starts a durable server task. An independent
+**Generate a preview of all current changes** starts a durable server task. An independent
 worker checks the selected relation groups and affected voices, rebuilds the
 score and synthesizes preview audio. Partial tie, beam, tuplet or chord-dependent
 changes can require a complete explicit selection. New structural problems block
@@ -44,9 +52,13 @@ Restoring music creates a new head and does not roll back website code.
 Other works remain separately authorized. The old general feedback
 inbox remains private and is not a calibration queue.
 
-Natural-language requests use the current published score and selected note IDs,
-not unsaved browser edits. Supported requests become a typed proposal. The user
-must inspect and explicitly confirm that difference before preview generation,
+Natural-language requests are interpreted against the current published score
+and selected note IDs. Supported requests become a typed proposal. After explicit
+confirmation, a proposal created in the current page joins its cumulative draft
+and generates a preview of the complete batch. A proposal that changes the same
+field of an already edited note is rejected before either change is applied;
+the user resolves that overlap explicitly. Saved jobs from other sessions are
+never silently merged. The user must inspect and confirm the difference,
 then explicitly publish the completed preview. Ambiguous or unsupported complex requests remain in `needs_input`; they must
 not be guessed into a broader edit. A configured model may propose only the supported musical patch;
 it cannot supply a shell command or alter the website implementation.

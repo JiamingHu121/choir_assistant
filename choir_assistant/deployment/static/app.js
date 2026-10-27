@@ -14,6 +14,7 @@
     $('home').textContent='♫ '+siteConfig.siteTitle;$('library-title').textContent=siteConfig.siteTitle;
     $('github-link').hidden=!siteConfig.githubUrl;if(siteConfig.githubUrl)$('github-link').href=siteConfig.githubUrl;
     $('feedback-open').hidden=!siteConfig.feedbackEnabled;
+    $('board-open').hidden=siteConfig.messageBoardEnabled!==true;
   }
   function askPassword(work) {
     if(passwordResolve)passwordResolve(false);
@@ -74,6 +75,54 @@
     try{const result=await api('/api/symbols?'+new URLSearchParams(params));if(token!==querying)return;$('query-status').textContent=`共 ${result.total} 个符号；显示 ${result.symbols.length} 个`;$('symbols').replaceChildren(...result.symbols.map(note=>{const row=el('tr');const fraction=note.rational?.duration;const q=fraction?`${fraction.numerator}/${fraction.denominator}`:note.duration;const rel=[...(note.tieTypes||[]).map(t=>'tie '+t),...(note.slurs||[]).map(s=>'slur '+s.type),...(note.notation?.tuplets||[]).map(t=>'tuplet '+t.type)].join(' · ');for(const text of [note.id,note.part,note.measure,note.kind==='rest'?'休止':`${note.pitchName||'无定音高'} (${note.pitch??'—'})`,q,`${Number(note.start||0).toFixed(2)}–${Number(note.end||0).toFixed(2)}`,rel||'—'])row.append(el('td',String(text)));return row;}));}catch(error){if(token===querying)message(error.message);}
   }
   function goHome(){opening++;querying++;selected=null;movement=null;$('work-select').value='';$('home-view').hidden=false;$('workbench').src='about:blank';$('workbench').hidden=true;$('data-panel').hidden=true;$('movement-select').hidden=true;message('');document.title=siteConfig.siteTitle;location.hash='';}
+  const tutorialKey='choir-workbench-tutorial-v1';
+  const tutorialSteps=[
+    {title:'你的合唱排练工作台',lead:'选一首歌，从听熟自己的声部开始。曲谱、音频和练习工具都放在同一个页面。',tip:'第一次进入',steps:['在首页选择曲目，或使用页眉的曲目列表切换。','输入团内共享的曲目密码，进入排练工作台。','点左上角的曲库标题可回到首页。']},
+    {title:'让曲谱跟着音乐走',lead:'播放时，谱面会标出正在唱的音。你也可以先选中需要练习的部分。',tip:'点选、框选和播放',steps:['点选音符；触屏可先选择“框选”，再拖动框住片段。','需要加选时打开“加选”，完成后关闭即可恢复单选。','在“选区”和“播放”面板中，练习选中片段、调整声部音量和速度；“原 PDF 对照”可查看原谱。']},
+    {title:'零散修改，一次发布',lead:'校准会累计本次所有改动。换一个音再改，前面的修改仍在待发布清单里。',tip:'校对的三个步骤',steps:['在“所选音符校准”卡里调整半音、音值或附点，可撤销、重做和试听。','改完后，在“本次修改”卡生成全部修改的预览，核对谱面与音频。','点击“发布全部修改”更新公共曲谱。持曲目密码者都可发布；版本历史支持恢复。']},
+    {title:'用你习惯的方式练习',lead:'控制台按功能分开，找到当下需要的工具即可。',tip:'更多练习与校准工具',steps:['“节拍”提供节拍器；“音准”可使用麦克风比较歌声与目标音。','自然语言修改请求有独立卡片：先确认解析出的差异，再与本次修改一起预览。','后台处理进度会显示在校对卡里；音准读数和自动识谱都需要结合实际听感、原谱核对。']},
+    {title:'把想法留给合唱团',lead:'想唱什么歌，或对排练有什么新想法？到留言板匿名分享吧。',tip:'留言和问题分别放在哪里',steps:['“留言板”公开展示匿名建议、想法和想唱的歌，大家都能看到。','谱面、音频或操作出了问题，使用“问题反馈”提交给维护者。','请勿在公开留言中填写密码、联系方式或其他个人信息。']}
+  ];
+  let tutorialIndex=0,tutorialResolve=null;
+  function tutorialSeen(){try{return localStorage.getItem(tutorialKey)==='done';}catch(_){return false;}}
+  function renderTutorial(){
+    const step=tutorialSteps[tutorialIndex];
+    $('tutorial-progress').replaceChildren(...tutorialSteps.map((_,index)=>{const n=el('span',null,index<=tutorialIndex?'is-active':'');n.setAttribute('aria-hidden','true');return n;}));
+    $('tutorial-progress').setAttribute('aria-label',`教程第 ${tutorialIndex+1} 步，共 ${tutorialSteps.length} 步`);
+    const count=el('span',`${String(tutorialIndex+1).padStart(2,'0')} / ${String(tutorialSteps.length).padStart(2,'0')}`,'tutorial-step-count');
+    const title=el('h2',step.title);title.id='tutorial-title';title.tabIndex=-1;
+    const tip=el('div',null,'tutorial-tip'),list=el('ol');list.append(...step.steps.map(text=>el('li',text)));tip.append(el('strong',step.tip),list);
+    $('tutorial-content').replaceChildren(count,title,el('p',step.lead,'tutorial-lead'),tip);
+    $('tutorial-back').disabled=tutorialIndex===0;$('tutorial-next').textContent=tutorialIndex===tutorialSteps.length-1?'开始使用':'下一步';
+    if($('tutorial-dialog').open)title.focus({preventScroll:true});
+  }
+  function openTutorial(){tutorialIndex=0;renderTutorial();if(!$('tutorial-dialog').open)$('tutorial-dialog').showModal();return new Promise(resolve=>{tutorialResolve=resolve;});}
+  function closeTutorial(){try{localStorage.setItem(tutorialKey,'done');}catch(_){}$('tutorial-dialog').close();const resolve=tutorialResolve;tutorialResolve=null;if(resolve)resolve();}
+  $('tutorial-open').onclick=()=>openTutorial();$('tutorial-close').onclick=closeTutorial;$('tutorial-skip').onclick=closeTutorial;
+  $('tutorial-back').onclick=()=>{if(tutorialIndex>0){tutorialIndex--;renderTutorial();}};
+  $('tutorial-next').onclick=()=>{if(tutorialIndex<tutorialSteps.length-1){tutorialIndex++;renderTutorial();}else closeTutorial();};
+  $('tutorial-dialog').addEventListener('cancel',event=>{event.preventDefault();closeTutorial();});
+  const boardCategories={suggestion:'建议与想法',song:'想唱的歌',other:'其他分享'};
+  let boardEpoch=0;
+  function renderBoard(items){
+    const rows=Array.isArray(items)?items:[];
+    if(!rows.length){const empty=el('div',null,'board-empty');empty.append(el('strong','还没有留言，来留第一条吧'),el('p','一首想唱的歌、一个关于排练的小点子，都可以。'));$('board-feed').replaceChildren(empty);return;}
+    $('board-feed').replaceChildren(...rows.map(item=>{const card=el('article',null,'board-message'),heading=el('div',null,'board-message-header');const time=el('time');const date=new Date(item.created);time.textContent=Number.isFinite(date.getTime())?date.toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';if(time.textContent)time.dateTime=item.created;heading.append(el('span',boardCategories[item.category]||'其他分享','board-category'),el('span','匿名团友'),time);card.append(heading,el('p',item.message));return card;}));
+  }
+  async function loadBoard(){const token=++boardEpoch;$('board-refresh').disabled=true;try{const data=await api('/api/message-board');if(token===boardEpoch)renderBoard(data.items);}catch(error){if(token===boardEpoch)$('board-feed').replaceChildren(el('p','留言暂时无法读取：'+error.message));}finally{if(token===boardEpoch)$('board-refresh').disabled=false;}}
+  $('board-open').onclick=()=>{$('board-status').textContent='';if(!$('board-dialog').open)$('board-dialog').showModal();loadBoard();};
+  $('board-close').onclick=()=>$('board-dialog').close();$('board-refresh').onclick=loadBoard;
+  $('board-message').oninput=()=>{$('board-counter').textContent=`${Array.from($('board-message').value).length} / 1200`;};
+  $('board-form').onsubmit=async event=>{
+    event.preventDefault();if($('board-submit').disabled)return;const text=$('board-message').value.trim();if(!text){$('board-status').textContent='先写一点想分享的内容吧。';return;}
+    $('board-submit').disabled=true;$('board-status').className='form-status';$('board-status').textContent='正在保存留言…';
+    try{await refreshConfig();await api('/api/message-board',{csrfToken:siteConfig.csrfToken,category:$('board-category').value,message:text});$('board-message').value='';$('board-message').oninput();$('board-status').className='form-status success';$('board-status').textContent='已匿名发布，谢谢你的分享。';await loadBoard();}
+    catch(error){$('board-status').textContent=error.message;}
+    finally{$('board-submit').disabled=false;}
+  };
+  function updateHeaderHeight(){const header=document.querySelector('header');document.documentElement.style.setProperty('--site-header-height',`${Math.ceil(header.getBoundingClientRect().height)}px`);}
+  if(typeof ResizeObserver==='function')new ResizeObserver(updateHeaderHeight).observe(document.querySelector('header'));else window.addEventListener('resize',updateHeaderHeight);
+  updateHeaderHeight();
   $('password-form').onsubmit=async event=>{
     event.preventDefault();if(!selected)return;$('password-submit').disabled=true;$('password-status').textContent='正在验证…';
     try{await refreshConfig();await api('/api/login',{work:selected.id,password:$('work-password').value,csrfToken:siteConfig.csrfToken});closePassword(true);}
@@ -99,5 +148,5 @@
   $('home').onclick=goHome;
   $('data-toggle').onclick=()=>showData().catch(e=>message(e.message));$('data-close').onclick=()=>{querying++;$('data-panel').hidden=true;};$('query').onclick=query;
   if(location.protocol==='file:'){message('此导出需要 HTTP 服务；请使用独立 site_server.py 启动后打开返回的网址。');$('total').textContent='需要本地服务';return;}
-  Promise.all([refreshConfig(),load(api('/api/catalog'))]).then(()=>{const id=location.hash.slice(1);if(id)openWork(id);}).catch(e=>message(e.message));
+  Promise.all([refreshConfig(),load(api('/api/catalog'))]).then(async()=>{const id=location.hash.slice(1);if(!tutorialSeen())await openTutorial();if(id)await openWork(id);}).catch(e=>message(e.message));
 })();

@@ -24,6 +24,7 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import threading
@@ -47,6 +48,9 @@ IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 GENERATED_PATH = re.compile(r"[a-f0-9]{32}/mix\.(?:wav|mid|mp3)\Z")
 RESPONSE_CACHE_BYTES = 64 * 1024 * 1024
 GZIP_MIN_BYTES = 256
+MESSAGE_BOARD_MAX_ENTRIES = 1000
+MESSAGE_BOARD_MAX_BYTES = 2 * 1024 * 1024
+MESSAGE_BOARD_DATABASE_BYTES = 4 * 1024 * 1024
 
 
 def accepts_gzip(header):
@@ -257,12 +261,89 @@ class SiteAccess:
         self.rates = OrderedDict()
         self.password_slots = threading.BoundedSemaphore(2)
         self.feedback_enabled = bool(config)
+        self.message_board_enabled = self.feedback_enabled
+        self.message_board_path = runtime / "message-board.sqlite3"
         if self.feedback_enabled:
             # No score data, cookies, passwords, request headers or client IPs are stored.
             with closing(sqlite3.connect(str(self.feedback_path))) as db:
                 db.execute("CREATE TABLE IF NOT EXISTS feedback (id TEXT PRIMARY KEY, created INTEGER NOT NULL, payload TEXT NOT NULL, bytes INTEGER NOT NULL)")
                 db.commit()
             os.chmod(str(self.feedback_path), 0o600)
+            self.prepare_message_board()
+
+    def check_message_board_file(self):
+        descriptor = os.open(self.message_board_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid()
+                    or stat.S_IMODE(info.st_mode) != 0o600):
+                raise ValueError("留言板须使用服务账号独占的 0600 普通文件")
+
+    def prepare_message_board(self):
+        # The existing writable feedback parent is the only storage location.
+        # No visitor-supplied path, IP, session, contact or headers enter this DB.
+        try:
+            descriptor = os.open(self.message_board_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            os.close(descriptor)
+        self.check_message_board_file()
+        with closing(sqlite3.connect(str(self.message_board_path))) as db:
+            db.execute("PRAGMA journal_mode=DELETE")
+            db.execute("PRAGMA max_page_count={}".format(MESSAGE_BOARD_DATABASE_BYTES // 4096))
+            db.execute("CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, category TEXT NOT NULL, message TEXT NOT NULL, created INTEGER NOT NULL, bytes INTEGER NOT NULL)")
+            db.commit()
+
+    @staticmethod
+    def public_message(row):
+        return {"id": row[0], "category": row[1], "message": row[2],
+                "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(row[3]))}
+
+    def message_board(self, client):
+        if not self.message_board_enabled:
+            return {"enabled": False, "items": []}
+        self.rate("message-board-read-ip:" + client, 60, 60)
+        self.rate("message-board-read-global", 300, 60)
+        with self.guard:
+            self.check_message_board_file()
+            with closing(sqlite3.connect(str(self.message_board_path), timeout=2)) as db:
+                rows = db.execute("SELECT id, category, message, created FROM messages ORDER BY created DESC, rowid DESC LIMIT 50").fetchall()
+        return {"enabled": True, "items": [self.public_message(row) for row in rows]}
+
+    def post_message(self, data, client):
+        if not self.message_board_enabled:
+            raise ValueError("站点尚未启用留言板")
+        self.rate("message-board-post-ip:" + client, 3, 600)
+        self.rate("message-board-post-global", 30, 600)
+        if set(data) - {"category", "message", "csrfToken"}:
+            raise ValueError("留言参数无效")
+        category, text = data.get("category"), data.get("message")
+        if not isinstance(category, str) or category not in ("suggestion", "song", "other"):
+            raise ValueError("留言分类须为建议、想唱的歌或其他")
+        if (not isinstance(text, str) or not 1 <= len(text.strip()) <= 1200
+                or any((ord(char) < 32 and char not in "\n\t") or ord(char) == 127 for char in text)):
+            raise ValueError("留言须为 1–1200 个字符，不能包含控制字符")
+        text = text.strip()
+        try:
+            size = len(json.dumps({"category": category, "message": text}, ensure_ascii=False).encode("utf-8"))
+        except UnicodeError:
+            raise ValueError("留言须使用有效的 Unicode 文字") from None
+        ident, created = uuid.uuid4().hex, int(time.time())
+        with self.guard:
+            self.check_message_board_file()
+            with closing(sqlite3.connect(str(self.message_board_path), timeout=2)) as db:
+                try:
+                    db.execute("PRAGMA max_page_count={}".format(MESSAGE_BOARD_DATABASE_BYTES // 4096))
+                    db.execute("BEGIN IMMEDIATE")
+                    count, total = db.execute("SELECT count(*), coalesce(sum(bytes), 0) FROM messages").fetchone()
+                    if count >= MESSAGE_BOARD_MAX_ENTRIES or total + size > MESSAGE_BOARD_MAX_BYTES:
+                        raise ResourceBusy("留言板已满，请联系维护者")
+                    db.execute("INSERT INTO messages VALUES (?, ?, ?, ?, ?)", (ident, category, text, created, size))
+                    db.commit()
+                except sqlite3.Error:
+                    raise ResourceBusy("留言板暂不可用，请稍后重试") from None
+        return self.public_message((ident, category, text, created))
 
     @staticmethod
     def cookie_name(work):
@@ -721,6 +802,7 @@ class Handler(BaseHTTPRequestHandler):
         token = self.site.access.token("csrf", sha256(client.encode()).hexdigest(), 3600)
         return {"siteTitle": self.site.access.title, "githubUrl": self.site.access.github,
                 "authRequired": self.site.access.enabled, "feedbackEnabled": self.site.access.feedback_enabled,
+                "messageBoardEnabled": self.site.access.message_board_enabled,
                 "csrfToken": token}
 
     def editor_actor(self, work):
@@ -938,6 +1020,8 @@ class Handler(BaseHTTPRequestHandler):
             if selected is None:
                 if path == "/api/site-config":
                     return self.json_response(self.public_config())
+                if path == "/api/message-board":
+                    return self.json_response(self.site.access.message_board(self.client_identity()))
                 if path == "/api/health/internal":
                     if not self.local_maintenance():
                         return self.json_response({"error": "不存在的页面"}, 404)
@@ -1091,7 +1175,7 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/api/correction", "/api/calibration"):
                 self.close_connection = True
                 return self.json_response({"error": "排练网站为只读版本；请联系维护者发布曲谱修订"}, 403)
-            if not ((selected is None and path in ("/api/open", "/api/login", "/api/feedback")) or (selected and path in ("/api/render", "/api/selection", "/api/editor"))):
+            if not ((selected is None and path in ("/api/open", "/api/login", "/api/feedback", "/api/message-board")) or (selected and path in ("/api/render", "/api/selection", "/api/editor"))):
                 self.close_connection = True
                 return self.json_response({"error": "不存在的操作"}, 404)
             if self.headers.get_content_type() != "application/json":
@@ -1101,7 +1185,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.close_connection = True
                 raise ValueError("请求长度无效")
             size = int(self.headers.get("Content-Length", "0"))
-            if not 0 < size <= 300000:
+            maximum = 8192 if selected is None and path == "/api/message-board" else 300000
+            if not 0 < size <= maximum:
                 self.close_connection = True
                 raise ValueError("请求大小无效")
             raw = self.rfile.read(size)
@@ -1126,12 +1211,15 @@ class Handler(BaseHTTPRequestHandler):
                 except self.site.editor_module.EditorUnavailable as error:
                     return self.json_response({"error": str(error)}, 503)
                 return self.json_response(dict(result, jobId=result["id"]), 202)
-            if selected is None and path in ("/api/login", "/api/feedback"):
+            if selected is None and path in ("/api/login", "/api/feedback", "/api/message-board"):
                 if not self.csrf_valid(data):
                     return self.json_response({"error": "页面验证已过期，请刷新后重试"}, 403)
                 if path == "/api/feedback":
                     ident = self.site.access.feedback(data, self.client_identity(), self.site.release["works"])
                     return self.json_response({"receipt": ident, "message": "反馈已保存，感谢帮助改进曲库"}, 201)
+                if path == "/api/message-board":
+                    item = self.site.access.post_message(data, self.client_identity())
+                    return self.json_response({"item": item}, 201)
                 work = data.get("work", "")
                 self.site.select(work)
                 if self.site.access.enabled:

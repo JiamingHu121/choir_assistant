@@ -7,3 +7,10 @@
 #editor-worker.is-error{color:#9b4b2d;background:#fff4e6;border-radius:5px;padding:9px}
 
 #editor-job details{margin:8px 0}#editor-job summary{cursor:pointer;min-height:36px;padding:7px 0;box-sizing:border-box}#editor-job .editor-events ol{max-height:150px;overflow:auto;padding-left:24px}#editor-job .editor-technical pre{max-height:180px}#editor-job>p{margin:8px 0}
+
+#selection-editor-host{display:grid;gap:16px;min-width:0}.editor-card{min-width:0;margin:0}.editor-batch{border:2px solid var(--green);background:#fbfdf9}.editor-batch-count{font-weight:700;font-size:15px}.editor-batch-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.editor-batch-actions button{min-height:44px;padding:10px 12px;flex:1 1 180px}.editor-task-caption{color:var(--muted);font-size:12px}#editor-proposal pre{max-height:160px;overflow:auto;white-space:pre-wrap}#editor-tasks button{text-align:left;line-height:1.5}#editor-publish{font-weight:700}.editor-card>h2{margin-top:0}
+.editor-optional{margin:10px 0 0;font-size:12px;color:var(--muted)}.editor-optional>summary{padding:7px 0;cursor:pointer;min-height:32px}.editor-optional .editor-field{color:var(--ink)}
+
+.editor-batch .editor-diff{max-height:135px}.editor-batch #editor-status{font-size:12px;line-height:1.6}.editor-batch .editor-batch-count{margin:9px 0}.editor-batch #editor-job:empty{display:none}
+
+.editor-change-list>summary{font-size:12px;color:var(--green);padding:8px 0;min-height:34px;cursor:pointer}.editor-change-list .editor-diff{margin:4px 0 10px}.editor-batch .editor-batch-actions{position:sticky;bottom:0;background:#fbfdf9;padding:7px 0;z-index:1}
