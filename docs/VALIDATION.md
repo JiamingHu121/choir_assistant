@@ -1,5 +1,13 @@
 # Plugin package validation
 
+## v0.6.1 — publication completion state
+
+Regressions follow queued preview, ready preview, a new queued publication job
+and the final published state. They check the complete draft binding, mutation
+freeze, correct success summary, reload action and preservation of a separate
+draft when opening another saved publication. See the
+[patch receipt](release-validation-v0.6.1.json).
+
 ## v0.6.0 — batch publication and community interface
 
 Regressions cover three separate selections in one publication, rejection of an

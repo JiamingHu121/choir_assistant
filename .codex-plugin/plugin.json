@@ -1,6 +1,6 @@
 {
   "name": "choir-assistant",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Import and review PDF choral scores, then optionally publish independent rehearsal websites.",
   "author": {
     "name": "Jiaming Hu",

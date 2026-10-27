@@ -15,6 +15,16 @@ Git repository. There is no built-in domain, SSH account or production library.
 An HTTPS gateway is configured independently; synchronization never changes DNS,
 Cloudflare configuration, gateway SSH keys, or other applications.
 
+The public website and the deployment management connection are independent.
+An outbound web tunnel can keep the site available while the profile's private
+SSH address is unreachable from an off-site client. Verify the configured SSH
+connection from the actual client network before promising remote updates.
+Off-site deployment requires an existing authenticated management tunnel, VPN or
+equivalent channel. Establishing that channel initially requires access to the
+host, either locally or through an already working remote-management session.
+Ordinary site synchronization does not expose SSH or turn the public score
+password into server-management authority.
+
 ## Register a completed score
 
 Complete the source review and verification described in [WORKFLOW.md](WORKFLOW.md)

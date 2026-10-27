@@ -6,7 +6,7 @@ This repository is a **local-execution Codex plugin and a standalone CLI**. It p
 
 ![Workbench generated from the original practice fixture](docs/workbench-example.png)
 
-**v0.6.0** simplifies correction into separate cards: current batch, selected-note
+**v0.6.1** simplifies correction into separate cards: current batch, selected-note
 controls, natural-language requests, and task/history management. Edits across
 selections accumulate into one preview and one publication; an outdated preview
 cannot publish a changed draft. First-use guidance and a permanent help button
@@ -14,7 +14,7 @@ explain the workflow. An optional anonymous public choir message board accepts
 suggestions and song requests, separately from private issue feedback.
 [Correction and synchronization](docs/MANUAL_CORRECTION.md) ·
 [Deployment workflow](docs/DEPLOYMENT.md) ·
-[Release notes](docs/RELEASE-v0.6.0.md) ·
+[Release notes](docs/RELEASE-v0.6.1.md) ·
 [Source-review contract](docs/SOURCE_REVIEW.md).
 
 ## Install the plugin

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "version": "0.6.1",
+  "recordedAtUTC": "2026-10-27T13:23:10.571799+00:00",
+  "regression": {
+    "javascript": 107,
+    "passed": true,
+    "python": {
+      "count": 328,
+      "backendUnchangedFrom": "41db709d8accf49981b31afdca6ceb92ee1eb912",
+      "acceptance": "release-validation-v0.6.0.json"
+    }
+  },
+  "publication": {
+    "newJobBoundToCompleteDraft": true,
+    "queuedToPublishedShowsSuccessAndReload": true,
+    "commitFreezesMutationAndDuplicateSubmission": true,
+    "commitPollingSurvivesTaskSwitchAttempts": true,
+    "historicalJobPreservesCurrentAuthoritativeContext": true
+  },
+  "distribution": {
+    "status": "passed",
+    "version": "0.6.1",
+    "wheelSha256": "16f1e85193f515565ab0af0fcd8db89745608a794f336ab02d059a649ef06206",
+    "regularWheelInstalledOutsideSource": true
+  },
+  "publicDeployment": {
+    "status": "pending-management-connectivity",
+    "existingProductionChanged": false
+  },
+  "sourceSha256": {
+    ".codex-plugin/plugin.json": "22658ff9501f8494da97a17da816fcdec45f5058f5b6807fee601109a9db2190",
+    "README.md": "b3d7e2a2c347bf0152986c48a9ada888ef9f71a0c7890a5e16930a9c024e6b07",
+    "choir_assistant/__init__.py": "94a5c40a3afa866263732863fe4c063de5d52c66242139dcbd356541a86c100a",
+    "docs/DEPLOYMENT.md": "eabb7d1a56e76562deeb5467eb577d8b3128e80586d0eb93f7fc7015ecd15ce1",
+    "docs/RELEASE-v0.6.1.md": "821c1777e74d87c01762d3f84605b22e388d62a40bc38a41212ceac4278b2966",
+    "docs/VALIDATION.md": "37641c61f04232adbd5f7fcfb59501aaf86f0003fcc1f3ebf90f67de4d2b5f87",
+    "plugin.json": "984abdab29a469edafb979ed7ee652d1d6542bbc82d91eafdcb5bd0cfd0d7c76",
+    "pyproject.toml": "c6f3c723cabad0e58fe687a807327394bda8d9f1adf1b7ea64d70993594033e5",
+    "tests/test_selection_editor.cjs": "a541cd6ae1ec6eee5e409dc74b04c3c23308a7945d0586a492748fed5a26f29a",
+    "workbench/calibration_ui.js": "6a1113985ed11ca22ca09fbc1b4a4604c5f1f5bee3cfa9f798f2842fc50dea9e"
+  }
+}
